@@ -1,0 +1,565 @@
+# Face Recognition Attendance System — Complete Implementation Plan
+
+---
+
+## 1. System Overview
+
+A **SaaS-level, multi-tenant** Face Recognition Attendance System with:
+- 5 roles: Super Admin, HR, Manager, Gatekeeper, Employee
+- Mobile app (React Native) with offline support
+- Web admin panel (React)
+- Central FastAPI server + PostgreSQL
+- Face recognition via mobile camera (InsightFace/TFLite)
+- Full salary engine (CTC + TDS + PF + ESI)
+- Leave & gate pass approval workflow
+- Push notifications, ImageKit storage
+
+---
+
+## 2. Roles & Permissions
+
+```mermaid
+graph TD
+    SA[🔴 Super Admin\nCompany Owner]
+    HR[🟠 HR]
+    MG[🟡 Manager\nper Department]
+    GK[🟢 Gatekeeper]
+    EM[🔵 Employee]
+
+    SA -->|Creates| HR
+    SA -->|Creates| MG
+    SA -->|Creates departments| MG
+    HR -->|Registers employees| EM
+    HR -->|Assigns manager| EM
+    HR -->|Enrolls face| EM
+    HR -->|Manages salary details| EM
+    MG -->|First approves| LV[Leave / Gate Pass]
+    HR -->|Final approves| LV
+    GK -->|Marks| AT[Attendance via Face]
+    EM -->|Views| PR[Profile, Payslip,\nID Card, Attendance]
+    EM -->|Raises| LV
+```
+
+### Role Permissions Table
+
+| Feature | Super Admin | HR | Manager | Gatekeeper | Employee |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Create company | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Create HR | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Register employee | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Enroll face | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Manage salary | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Mark attendance | ❌ | ❌ | ❌ | ✅ | ❌ |
+| View attendance | ✅ | ✅ | ✅ (dept) | ❌ | ✅ (own) |
+| Approve leave | ✅ | ✅ (final) | ✅ (first) | ❌ | ❌ |
+| Approve gate pass | ✅ | ✅ (final) | ✅ (first) | ❌ | ❌ |
+| View reports | ✅ | ✅ | ✅ (dept) | ❌ | ❌ |
+| View own payslip | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Generate payslip | ✅ | ✅ | ❌ | ❌ | ❌ |
+
+---
+
+## 3. Tech Stack
+
+### Backend
+| Layer | Technology | Reason |
+|---|---|---|
+| Language | Python 3.11+ | Best ML ecosystem |
+| Framework | **FastAPI** | Async, fast, auto Swagger docs |
+| Face Recognition | **InsightFace (ArcFace)** | Server-side, high accuracy |
+| On-device Face (offline) | **TFLite MobileFaceNet** | Lightweight, runs on phone |
+| Auth | **JWT (HS256)** + bcrypt | Stateless, secure |
+| ORM | **SQLAlchemy 2.0** + Alembic | Migrations, type-safe |
+| Database | **PostgreSQL 16** | Multi-tenant, ACID, scalable |
+| Cache | **Redis** | Face embeddings cache, sessions |
+| Task Queue | **Celery + Redis** | Salary calc, report generation |
+| File Storage | **ImageKit** (free tier → paid) | Images, documents, ID cards |
+| PDF Generation | **WeasyPrint** | Payslips, ID cards |
+| Push Notifications | **Firebase FCM** | Android + iOS |
+| Rate Limiting | **slowapi** | API abuse prevention |
+| Logging | **structlog + Sentry** | Error tracking |
+
+### Frontend — Admin Web Panel
+| Tech | Use |
+|---|---|
+| **React 18 + Vite** | Fast build, component-based |
+| **Ant Design** | Enterprise UI components |
+| **Recharts / ApexCharts** | Dashboard charts |
+| **React Query** | Server state, caching |
+| **Zustand** | Global state |
+| **Axios** | API calls with interceptors |
+
+### Mobile App
+| Tech | Use |
+|---|---|
+| **React Native + Expo** | Android + iOS, one codebase |
+| **expo-camera** | Webcam / face capture |
+| **expo-sqlite + WatermelonDB** | Offline local storage |
+| **TFLite via react-native-fast-tflite** | On-device face match |
+| **Notifee + FCM** | Push notifications |
+| **React Navigation** | App navigation |
+| **React Query** | API + offline sync |
+
+### Infrastructure
+| Tech | Use |
+|---|---|
+| **Docker + Docker Compose** | Containerization |
+| **Nginx** | Reverse proxy, SSL |
+| **GitHub Actions** | CI/CD pipeline |
+| **PostgreSQL Row-Level Security** | Multi-tenant data isolation |
+| **Redis Cluster** | Cache at scale |
+
+---
+
+## 4. Multi-Tenant Architecture (Company Isolation)
+
+```mermaid
+flowchart TD
+    SA[Super Admin] --> C1[Company A\ncompany_id=1]
+    SA --> C2[Company B\ncompany_id=2]
+    SA --> C3[Company C\ncompany_id=3]
+
+    C1 --> D1[(PostgreSQL\nRow-Level Security\ncompany_id filter)]
+    C2 --> D1
+    C3 --> D1
+
+    D1 --> T1[employees WHERE company_id=1]
+    D1 --> T2[employees WHERE company_id=2]
+```
+
+**Isolation Strategy:**
+- Every table has `company_id` column
+- PostgreSQL **Row-Level Security (RLS)** enforced at DB level
+- JWT token contains `company_id` + `role`
+- Every API query automatically filters by `company_id` from token
+- No cross-company data leakage possible
+
+---
+
+## 5. Authentication & Security
+
+```mermaid
+sequenceDiagram
+    actor U as User (Mobile/Web)
+    participant A as FastAPI
+    participant R as Redis
+    participant D as PostgreSQL
+
+    U->>A: POST /auth/login {user_id, password}
+    A->>D: Verify user + company
+    D-->>A: User record + role + company_id
+    A->>A: Verify bcrypt password
+    A->>A: Generate Access Token (15min) + Refresh Token (7days)
+    A->>R: Store refresh token hash
+    A-->>U: {access_token, refresh_token}
+
+    U->>A: Any API request + Bearer token
+    A->>A: Verify JWT signature + expiry
+    A->>A: Extract company_id + role
+    A->>D: Query with company_id filter (RLS)
+    D-->>A: Data
+    A-->>U: Response
+
+    U->>A: POST /auth/refresh {refresh_token}
+    A->>R: Validate refresh token
+    A-->>U: New access_token
+```
+
+**Security Measures:**
+- JWT Access Token: **15 minutes** expiry
+- Refresh Token: **7 days**, stored in Redis (revocable)
+- Passwords: **bcrypt** (cost factor 12)
+- Documents (Aadhaar, PAN): stored **encrypted** on ImageKit + signed URLs
+- API Rate Limiting: 100 req/min per user
+- HTTPS enforced (Nginx + Let's Encrypt)
+- CORS: only allowed origins
+- SQL Injection: prevented by SQLAlchemy ORM
+- Input validation: Pydantic schemas on all endpoints
+
+---
+
+## 6. User ID Generation
+
+Format: `{COMPANY_CODE}-{ROLE_PREFIX}-{SEQUENTIAL_NUMBER}`
+
+| Role | Example ID |
+|---|---|
+| HR | `ABC-HR-001` |
+| Manager | `ABC-MGR-001` |
+| Gatekeeper | `ABC-GK-001` |
+| Employee | `ABC-EMP-001` |
+| Super Admin | `ABC-SA-001` |
+
+**Password**: Auto-generated 8-char (uppercase + number + symbol), sent via push notification or displayed once at creation.
+
+---
+
+## 7. Database Schema
+
+```mermaid
+erDiagram
+    COMPANIES ||--o{ USERS : has
+    COMPANIES ||--o{ DEPARTMENTS : has
+    COMPANIES ||--o{ SHIFTS : has
+    DEPARTMENTS ||--o{ EMPLOYEES : belongs_to
+    DEPARTMENTS ||--|| USERS : managed_by_manager
+    USERS ||--o{ EMPLOYEES : is
+    EMPLOYEES ||--o{ FACE_EMBEDDINGS : has
+    EMPLOYEES ||--o{ ATTENDANCE_LOGS : creates
+    EMPLOYEES ||--o{ LEAVE_REQUESTS : raises
+    EMPLOYEES ||--o{ GATE_PASS_REQUESTS : raises
+    EMPLOYEES ||--o{ SALARY_RECORDS : generates
+    EMPLOYEES ||--o{ DOCUMENTS : uploads
+    SHIFTS ||--o{ EMPLOYEES : assigned_to
+    LEAVE_REQUESTS ||--o{ APPROVAL_STEPS : tracked_by
+    GATE_PASS_REQUESTS ||--o{ APPROVAL_STEPS : tracked_by
+```
+
+### Key Tables
+
+```sql
+-- companies
+id, name, code, logo_url, address, is_active, created_at
+
+-- users (all roles stored here)
+id, company_id, user_id_display, role, email, phone,
+password_hash, fcm_token, is_active
+
+-- employees (extended profile)
+id, user_id, company_id, department_id, shift_id,
+name, dob, phone1, phone2, address,
+aadhar_url, pan_url, photo_url,
+basic_salary, hra, da, pf_percent, esi_percent,
+education_details (JSON), joining_date
+
+-- face_embeddings
+id, employee_id, embedding (float[] / JSON), created_at
+
+-- attendance_logs
+id, employee_id, company_id, date, check_in,
+check_out, status (present/absent/late/half-day/OT),
+ot_hours, marked_by (gatekeeper user_id), is_manual
+
+-- leave_requests
+id, employee_id, leave_type, start_date, end_date,
+days, reason, status (pending/approved/rejected),
+manager_status, hr_status
+
+-- gate_pass_requests
+id, employee_id, reason, out_time, expected_return,
+status, manager_status, hr_status
+
+-- approval_steps
+id, request_type, request_id, approver_id, role,
+action (approved/rejected), note, timestamp
+
+-- salary_records
+id, employee_id, month, year,
+basic, hra, da, ot_pay, gross,
+pf_deduction, esi_deduction, tds_deduction,
+other_deductions, net_salary,
+status (draft/published), published_at
+
+-- departments
+id, company_id, name, manager_user_id
+
+-- shifts
+id, company_id, name, start_time, end_time,
+type (fixed/rotational/flexible), grace_minutes
+
+-- documents
+id, employee_id, doc_type, file_url, uploaded_at
+```
+
+---
+
+## 8. Core Flow Diagrams
+
+### 8.1 Face Recognition Attendance Flow (Gatekeeper)
+
+```mermaid
+flowchart TD
+    GK[Gatekeeper opens app] --> CAM[Open Camera]
+    CAM --> CAP[Capture Face Frame]
+    CAP --> DET{Face Detected?}
+    DET -->|No| CAM
+    DET -->|Yes| EMB[Extract Face Embedding\non device TFLite]
+    EMB --> CMP[Compare with cached\nemployee embeddings]
+    CMP --> SIM{Similarity > 0.6?}
+    SIM -->|No| UNK[Unknown Face ❌\nShow alert]
+    SIM -->|Yes| ID[Employee Identified ✅]
+    ID --> CHK{Already checked\nin today?}
+    CHK -->|No| CI[Mark Check-In\n+ timestamp]
+    CHK -->|Yes| CO[Mark Check-Out\n+ calc OT]
+    CI --> SAVE[Save to local SQLite]
+    CO --> SAVE
+    SAVE --> SYNC{Online?}
+    SYNC -->|Yes| SERVER[Sync to Server immediately]
+    SYNC -->|No| QUEUE[Queue for later sync]
+    SERVER --> NOTIF[Push notification\nto Employee ✅]
+    QUEUE --> LATER[Auto-sync when\nnetwork returns]
+```
+
+### 8.2 Leave Request Approval Flow
+
+```mermaid
+flowchart TD
+    EM[Employee raises\nLeave Request] --> MGR_NOTIF[Push notification\nto Manager]
+    MGR_NOTIF --> MGR{Manager Decision}
+    MGR -->|Reject| REJ1[Status: Rejected\nNotify Employee]
+    MGR -->|Approve| HR_NOTIF[Push notification\nto HR]
+    HR_NOTIF --> HR{HR Decision}
+    HR -->|Reject| REJ2[Status: Rejected\nNotify Employee]
+    HR -->|Approve| APR[Status: Approved\nNotify Employee]
+    APR --> ATT[Mark attendance as\nLeave on those dates]
+```
+
+### 8.3 Salary Calculation Flow
+
+```mermaid
+flowchart TD
+    TRIG[HR triggers salary\ncalculation for month] --> CELERY[Celery background task]
+    CELERY --> FETCH[Fetch all employees\nattendance for month]
+    FETCH --> CALC[Calculate per employee]
+    CALC --> SAL[Basic + HRA + DA]
+    SAL --> OT[+ OT Pay\nbased on hourly rate]
+    OT --> DED[- PF deduction\n- ESI deduction\n- LWP deduction]
+    DED --> TDS[- TDS\nbased on annual projection]
+    TDS --> NET[= Net Salary]
+    NET --> DRAFT[Save as DRAFT]
+    DRAFT --> HR_REV[HR reviews draft]
+    HR_REV --> PUB[HR publishes]
+    PUB --> NOTIF[Push notification\nto all employees]
+    NOTIF --> VIEW[Employee views\npayslip in app]
+```
+
+---
+
+## 9. API Structure
+
+```
+/api/v1/
+├── auth/
+│   ├── POST /login
+│   ├── POST /refresh
+│   └── POST /logout
+│
+├── companies/               ← Super Admin only
+│   ├── POST /
+│   ├── GET /
+│   └── GET /{id}
+│
+├── users/                   ← HR creates, Super Admin manages
+│   ├── POST /               (create HR/Manager/Gatekeeper)
+│   ├── GET /
+│   └── PUT /{id}
+│
+├── employees/               ← HR manages
+│   ├── POST /
+│   ├── GET /
+│   ├── GET /{id}
+│   ├── PUT /{id}
+│   ├── POST /{id}/enroll-face
+│   └── GET /{id}/id-card
+│
+├── departments/
+│   ├── POST /
+│   ├── GET /
+│   └── PUT /{id}
+│
+├── shifts/
+│   ├── POST /
+│   ├── GET /
+│   └── PUT /{id}
+│
+├── attendance/
+│   ├── POST /check-in       ← Gatekeeper
+│   ├── GET /                ← filtered by date, dept, employee
+│   ├── PUT /{id}            ← HR manual correction
+│   └── GET /summary
+│
+├── leaves/
+│   ├── POST /               ← Employee raises
+│   ├── GET /                ← role-based view
+│   ├── POST /{id}/approve   ← Manager / HR
+│   └── POST /{id}/reject
+│
+├── gate-pass/
+│   ├── POST /
+│   ├── GET /
+│   ├── POST /{id}/approve
+│   └── POST /{id}/reject
+│
+├── salary/
+│   ├── POST /calculate      ← HR triggers (Celery task)
+│   ├── GET /                ← HR views all
+│   ├── GET /{employee_id}   ← Employee views own
+│   ├── POST /{id}/publish   ← HR publishes
+│   └── GET /{id}/payslip    ← PDF download
+│
+└── reports/
+    ├── GET /attendance
+    ├── GET /salary
+    └── GET /department
+```
+
+---
+
+## 10. Offline Sync Strategy (Mobile)
+
+```mermaid
+flowchart LR
+    subgraph Phone [📱 Mobile App]
+        A[Action performed\ne.g. attendance marked] --> B[Save to WatermelonDB\nSQLite locally]
+        B --> C{Network\navailable?}
+        C -->|Yes| D[Sync immediately\nto server]
+        C -->|No| E[Add to sync queue]
+        E --> F[Background sync\nwhen network returns]
+    end
+
+    subgraph Server [🖥️ Server]
+        D --> G[Validate + save\nto PostgreSQL]
+        F --> G
+        G --> H[Return sync status]
+    end
+```
+
+**What's stored offline on phone:**
+- Employee's own face embedding (for gatekeeper device)
+- All company employees' embeddings (gatekeeper device only)
+- Own attendance last 30 days
+- Pending leave/gate pass requests
+- Shift schedule
+- Leave balance
+
+---
+
+## 11. Scaling & Optimization
+
+| Area | Strategy |
+|---|---|
+| **Face matching** | Redis cache all embeddings, avoid DB hit per check-in |
+| **Database** | Read replicas for reports, write to primary only |
+| **Salary calc** | Celery async task, not blocking API |
+| **File storage** | ImageKit CDN — auto image optimization |
+| **API** | FastAPI async endpoints, connection pooling (asyncpg) |
+| **Multi-tenant** | PostgreSQL RLS, company_id indexed on all tables |
+| **Horizontal scale** | Stateless FastAPI → multiple instances behind Nginx |
+| **Monitoring** | Sentry for errors, Prometheus + Grafana for metrics |
+
+---
+
+## 12. Build Phases (Step by Step)
+
+### Phase 1 — Foundation (Week 1–2)
+- [ ] Project folder structure
+- [ ] FastAPI app + PostgreSQL + Docker setup
+- [ ] All database models + Alembic migrations
+- [ ] JWT Auth (login, refresh, logout)
+- [ ] User ID generation logic
+- [ ] Super Admin: create company + create HR
+
+### Phase 2 — Employee Management (Week 3–4)
+- [ ] HR: register employee (full details)
+- [ ] Document upload to ImageKit
+- [ ] Department & shift management
+- [ ] Manager assignment per department
+- [ ] Gatekeeper creation
+
+### Phase 3 — Face Enrollment (Week 5)
+- [ ] InsightFace setup on server
+- [ ] Face enrollment API (HR enrolls employee face)
+- [ ] TFLite model setup for mobile
+- [ ] Store & cache embeddings in Redis
+
+### Phase 4 — Attendance (Week 6–7)
+- [ ] Gatekeeper mobile app — face capture + recognition
+- [ ] Check-in / check-out logic
+- [ ] OT auto-detection
+- [ ] HR manual correction
+- [ ] Offline sync engine
+
+### Phase 5 — Leave & Gate Pass (Week 8)
+- [ ] Employee: raise leave / gate pass request
+- [ ] Manager: approve/reject (push notification)
+- [ ] HR: final approve/reject
+- [ ] Status tracking
+
+### Phase 6 — Salary Engine (Week 9–10)
+- [ ] Salary structure setup (Basic, HRA, DA, PF, ESI, TDS)
+- [ ] Monthly calculation (Celery task)
+- [ ] Draft → review → publish flow
+- [ ] PDF payslip generation
+
+### Phase 7 — Employee App Features (Week 11)
+- [ ] Employee: view attendance calendar
+- [ ] Employee: digital ID card + PDF download
+- [ ] Employee: view payslip
+- [ ] Employee: raise leave / gate pass
+
+### Phase 8 — Admin Web Panel (Week 12–13)
+- [ ] React + Ant Design setup
+- [ ] All CRUD pages
+- [ ] Dashboard charts (attendance, OT, department stats)
+- [ ] Report export (Excel, PDF)
+
+### Phase 9 — Security & Optimization (Week 14)
+- [ ] Rate limiting
+- [ ] RLS enforcement test
+- [ ] Redis caching for embeddings
+- [ ] Load testing
+
+### Phase 10 — Deployment (Week 15)
+- [ ] Docker Compose production setup
+- [ ] Nginx + SSL
+- [ ] GitHub Actions CI/CD
+- [ ] Sentry + monitoring
+
+---
+
+## Project Folder Structure
+
+```
+face-attendance/
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── core/
+│   │   │   ├── config.py        ← env vars
+│   │   │   ├── security.py      ← JWT, bcrypt
+│   │   │   └── dependencies.py  ← role guards
+│   │   ├── models/              ← SQLAlchemy models
+│   │   ├── schemas/             ← Pydantic schemas
+│   │   ├── routers/             ← API routes
+│   │   ├── services/            ← business logic
+│   │   ├── tasks/               ← Celery tasks
+│   │   └── face/                ← InsightFace engine
+│   ├── alembic/                 ← migrations
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── frontend/                    ← React admin panel
+│   ├── src/
+│   │   ├── pages/
+│   │   ├── components/
+│   │   ├── services/            ← API calls
+│   │   └── store/               ← Zustand
+│   └── package.json
+│
+├── mobile/                      ← React Native app
+│   ├── src/
+│   │   ├── screens/
+│   │   ├── components/
+│   │   ├── services/
+│   │   ├── offline/             ← WatermelonDB sync
+│   │   └── face/                ← TFLite engine
+│   └── package.json
+│
+├── docker-compose.yml
+├── nginx.conf
+└── .env
+```
+
+---
+
+> **Ready to start?** Reply "start Phase 1" and I will build the FastAPI backend foundation with Docker, PostgreSQL, all models, and JWT auth.

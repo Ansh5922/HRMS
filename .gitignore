@@ -1,0 +1,55 @@
+# Environments
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+backend/.venv/
+
+# Environment Variables
+.env
+*.env
+!.env.example
+backend/.env
+
+# Python / Pycache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Database / SQLite
+*.sqlite3
+*.db
+
+# Node / Web / Mobile
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.expo/
+dist/
+.next/
+out/
+
+# IDE / System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
