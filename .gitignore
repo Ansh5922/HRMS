@@ -53,3 +53,6 @@ out/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Implementation Plan
+implementation_plan hrms
