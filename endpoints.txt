@@ -1,0 +1,174 @@
+Auth Module API Endpoints:
+
+POST /api/v1/auth/register - Registers new Organization, creates system super_admin role with all permissions, and returns Access & Refresh tokens.
+POST /api/v1/auth/login - Authenticates user, handles failed login attempts / 30-min account lockouts, logs IP & User-Agent audit trails, embeds role and permissions in JWT claims.
+POST /api/v1/auth/refresh - Refresh Token rotation (revokes old token, handles stolen/reused token detection).
+POST /api/v1/auth/forgot-password - Generates password reset token.
+POST /api/v1/auth/reset-password - Resets password with valid token and revokes all active sessions.
+GET /api/v1/auth/me - Protected: Fetch current user profile & permissions.
+PUT /api/v1/auth/change-password - Protected: Change current user password & invalidate active refresh tokens.
+POST /api/v1/auth/logout - Protected: Revokes current refresh token.
+POST /api/v1/auth/logout-all - Protected: Revokes all active refresh tokens for the user across all devices.
+GET /api/v1/users - Protected (users:read): List organization users.
+POST /api/v1/users - Protected (users:write): Create new user with assigned role.
+PUT /api/v1/users/:id - Protected (users:write): Update user state/role.
+DELETE /api/v1/users/:id - Protected (users:delete): Deactivate user & revoke tokens.
+GET /api/v1/roles - Protected (settings:read): List custom & system roles for org.
+POST /api/v1/roles - Protected (settings:write): Create custom organization role.
+GET /api/v1/roles/:id - Protected (settings:read): Get role details with permissions.
+PUT /api/v1/roles/:id - Protected (settings:write): Update role.
+DELETE /api/v1/roles/:id - Protected (settings:write): Delete custom role.
+POST /api/v1/roles/assign - Protected (users:write): Assign role to a user.
+GET /api/v1/roles/:id/permissions - Protected (settings:read): Get permissions assigned to a role.
+PUT /api/v1/roles/:id/permissions - Protected (settings:write): Set permissions for a role.
+GET /api/v1/permissions - Protected (settings:read): List all system permissions.
+
+
+Employee Sub-Modules & Endpoints
+
+1. Employee Core Management
+POST /api/v1/employees (employee:write) — Create employee with auto-generated Employee Code (e.g. EMPJD0001), joining date, and status.
+GET /api/v1/employees (employee:read) — List employees with pagination (page, limit), search query, and filtering by department, designation, and status.
+GET /api/v1/employees/me (JWT) — Get logged-in employee profile.
+GET /api/v1/employees/:id (employee:read) — Get detailed employee profile (joins department name, designation title, and manager name).
+PUT /api/v1/employees/:id (employee:write) — Update employee profile.
+DELETE /api/v1/employees/:id (employee:delete) — Delete employee record.
+
+2. Department Management
+POST /api/v1/departments (employee:write) — Create department (supports parent department & department head).
+GET /api/v1/departments (employee:read) — List departments in org.
+GET /api/v1/departments/:id (employee:read) — Get department details.
+PUT /api/v1/departments/:id (employee:write) — Update department.
+DELETE /api/v1/departments/:id (employee:write) — Delete department.
+
+3. Designation Management
+POST /api/v1/designations (employee:write) — Create designation (with level/grade & department linkage).
+GET /api/v1/designations (employee:read) — List designations in org.
+GET /api/v1/designations/:id (employee:read) — Get designation details.
+PUT /api/v1/designations/:id (employee:write) — Update designation.
+DELETE /api/v1/designations/:id (employee:write) — Delete designation.
+
+4. Bank Details Management
+POST /api/v1/employees/:emp_id/bank-details (employee:write) — Save primary bank details (bank name, IFSC code, account type).
+GET /api/v1/employees/:emp_id/bank-details (employee:read) — Get bank details (returns masked account number e.g. XXXX-XXXX-1234 for security).
+
+5. Emergency Contacts
+POST /api/v1/employees/:emp_id/emergency-contacts (employee:write) — Add emergency contact (name, relation, phone, email, address).
+GET /api/v1/employees/:emp_id/emergency-contacts (employee:read) — List emergency contacts for an employee.
+DELETE /api/v1/employees/emergency-contacts/:id (employee:write) — Remove emergency contact.
+
+6. Employee Documents
+POST /api/v1/employees/:emp_id/documents (employee:write) — Upload document metadata (doc type, file URL, filename).
+GET /api/v1/employees/:emp_id/documents (employee:read) — List uploaded documents for an employee.
+PATCH /api/v1/employees/documents/:id/verify (employee:write) — Mark document as verified by HR/Admin.
+DELETE /api/v1/employees/documents/:id (employee:write) — Remove document record.
+
+7. Onboarding Checklist
+POST /api/v1/employees/:emp_id/onboarding (employee:write) — Create onboarding task (task name, description, assigned user, due date).
+GET /api/v1/employees/:emp_id/onboarding (employee:read) — List onboarding tasks for employee.
+PATCH /api/v1/employees/onboarding/:id (employee:write) — Update task status (pending, completed).
+
+
+Leave Management Sub-Modules & Endpoints
+
+1. Leave Types Management
+GET /api/v1/leave-types (leave:read) — List organization leave types (Casual, Sick, Earned, Maternity, etc.).
+POST /api/v1/leave-types (settings:write) — Create new leave type with rules (paid/unpaid, doc requirement, notice days, gender applicability, max days).
+PUT /api/v1/leave-types/:id (settings:write) — Update leave type settings.
+DELETE /api/v1/leave-types/:id (settings:write) — Delete leave type.
+
+2. Leave Policies Management
+GET /api/v1/leave-policies (leave:read) — List leave policies.
+POST /api/v1/leave-policies (settings:write) — Define leave policy by designation/department (annual quota & accrual type: upfront, monthly, quarterly).
+DELETE /api/v1/leave-policies/:id (settings:write) — Delete leave policy.
+
+3. Leave Balances Management
+POST /api/v1/leave-balances (leave:write) — Allocate annual leave quota for an employee.
+GET /api/v1/leave-balances/employee/:emp_id (leave:read) — View employee leave balance breakdown (total, used, pending, available).
+
+4. Leave Applications & Workflow
+POST /api/v1/leaves/apply/:emp_id (leave:write) — Apply for leave (validates balance, session, date range, and mandatory doc upload).
+GET /api/v1/leaves/employee/:emp_id (leave:read) — List employee's leave applications & status.
+GET /api/v1/leaves/org (leave:read) — List all organization leave requests (filterable by status: pending, approved, rejected).
+GET /api/v1/leaves/:id (leave:read) — Get detailed leave application with employee name & leave type details.
+PATCH /api/v1/leaves/:id/approve (leave:approve) — Approve leave (deducts pending, adds to used balance, logs audit trail).
+PATCH /api/v1/leaves/:id/reject (leave:approve) — Reject leave with comment (restores pending balance, logs audit trail).
+POST /api/v1/leaves/:id/cancel (leave:write) — Cancel pending leave application.
+
+
+Payroll & Compensation Sub-Modules & Endpoints
+
+1. Salary Structures & Components
+GET /api/v1/salary-structures (payroll:read) — List organization salary structures with components.
+POST /api/v1/salary-structures (payroll:write) — Create salary structure with earnings, deductions, calculation formulas, and taxability rules.
+GET /api/v1/salary-structures/:id (payroll:read) — Get salary structure details.
+DELETE /api/v1/salary-structures/:id (payroll:write) — Delete salary structure.
+
+2. Employee CTC & Salary Assignments
+POST /api/v1/employee-salaries/assign (payroll:write) — Assign CTC & Basic structure to an employee.
+GET /api/v1/employee-salaries/employee/:emp_id (payroll:read) — View employee CTC breakdown & assigned salary structure.
+
+3. Payroll Execution Runs
+GET /api/v1/payroll-runs (payroll:read) — List historical payroll runs for organization.
+POST /api/v1/payroll-runs (payroll:write) — Initialize new monthly payroll processing run (`month`, `year`).
+GET /api/v1/payroll-runs/:id (payroll:read) — Get payroll run summary (gross, deductions, net totals, status).
+POST /api/v1/payroll-runs/:id/process (payroll:write) — Execute batch payroll calculation across all active employees in organization.
+
+4. Payslips
+GET /api/v1/payslips/:id (payroll:read) — Fetch single payslip breakdown.
+GET /api/v1/payslips/run/:run_id (payroll:read) — List all payslips generated in a specific payroll run.
+GET /api/v1/payslips/employee/:emp_id (payroll:read) — List payslips history for an employee.
+
+5. Expense Reimbursements
+POST /api/v1/reimbursements/employee/:emp_id (payroll:write) — Submit expense reimbursement claim (category, amount, description, receipt URL).
+GET /api/v1/reimbursements/employee/:emp_id (payroll:read) — List employee's reimbursement claims.
+GET /api/v1/reimbursements/org (payroll:read) — List organization reimbursement claims (filterable by status).
+PATCH /api/v1/reimbursements/:id/approve (payroll:approve) — Approve reimbursement claim for payroll inclusion.
+PATCH /api/v1/reimbursements/:id/reject (payroll:approve) — Reject reimbursement claim.
+
+6. Tax Declarations
+POST /api/v1/tax-declarations/employee/:emp_id (payroll:write) — Submit annual tax regime & Section 80C/80D investment declaration.
+GET /api/v1/tax-declarations/employee/:emp_id (payroll:read) — Get employee tax declaration for a given year (`?year=2026`).
+
+
+Workflow & Custom Approvals Engine Sub-Modules & Endpoints
+
+1. Workflow Templates Management
+GET /api/v1/workflows/templates (settings:read) — List custom multi-stage workflow templates (leave, expense, document, shift).
+POST /api/v1/workflows/templates (settings:write) — Create custom workflow template with multi-level approval steps JSON.
+GET /api/v1/workflows/templates/:id (settings:read) — Get workflow template details.
+PUT /api/v1/workflows/templates/:id (settings:write) — Update workflow template.
+DELETE /api/v1/workflows/templates/:id (settings:write) — Delete workflow template.
+
+2. Approval Requests & Multi-Step Execution Engine
+POST /api/v1/approvals/submit (leave:write) — Initiate approval request for any module resource (`module`, `resource_id`, optional `workflow_id`).
+GET /api/v1/approvals/org (leave:read) — List organization-wide approval requests (filterable by `status`).
+GET /api/v1/approvals/pending-me (leave:read) — List requests awaiting current user's approval.
+GET /api/v1/approvals/my-requests (leave:read) — List requests submitted by current user.
+GET /api/v1/approvals/:id (leave:read) — Get approval request details with step-by-step audit logs.
+PATCH /api/v1/approvals/:id/approve (leave:approve) — Approve current step (advances to next step or marks request fully approved).
+PATCH /api/v1/approvals/:id/reject (leave:approve) — Reject request at current step with comment.
+
+
+Notifications & Announcements Sub-Modules & Endpoints
+
+1. In-App Notifications
+GET /api/v1/notifications/me (JWT) — Fetch current user's notifications (supports pagination `?limit=50&offset=0`).
+GET /api/v1/notifications/unread-count (JWT) — Get real-time unread notification count badge.
+PATCH /api/v1/notifications/:id/read (JWT) — Mark specific notification as read.
+PATCH /api/v1/notifications/read-all (JWT) — Mark all user notifications as read.
+DELETE /api/v1/notifications/:id (JWT) — Delete notification.
+
+2. Company Announcements
+GET /api/v1/announcements (JWT) — List active company & department announcements.
+POST /api/v1/announcements (settings:write) — Broadcast company-wide or department-targeted announcement.
+GET /api/v1/announcements/:id (JWT) — Get announcement details.
+DELETE /api/v1/announcements/:id (settings:write) — Delete announcement.
+
+3. Notification Preferences
+GET /api/v1/notification-preferences (JWT) — Get user notification preferences across channels (email, push, SMS).
+POST /api/v1/notification-preferences (JWT) — Save/update channel preferences per event type.
+
+4. Push Token Registration
+POST /api/v1/push-tokens (JWT) — Register FCM/Web Push device token (`token`, `platform`).
+DELETE /api/v1/push-tokens (JWT) — Unregister device push token.

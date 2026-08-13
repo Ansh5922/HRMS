@@ -1,0 +1,990 @@
+================================================================================
+              HRMS — COMPLETE DATABASE SCHEMA (PostgreSQL + pgvector)
+================================================================================
+Version : 1.0.0  |  Date : 2026-08-14  |  DB : PostgreSQL 16 + pgvector
+================================================================================
+
+-- ============================================================
+-- SETUP: EXTENSIONS
+-- ============================================================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "vector";          -- pgvector
+
+
+-- ============================================================
+-- MODULE 1: AUTHENTICATION & AUTHORIZATION
+-- ============================================================
+
+CREATE TABLE organizations (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name            VARCHAR(255) NOT NULL,
+    logo_url        TEXT,
+    address         TEXT,
+    timezone        VARCHAR(100) DEFAULT 'Asia/Kolkata',
+    fin_year_start  INT DEFAULT 4,              -- month number (April=4)
+    is_active       BOOLEAN DEFAULT TRUE,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE roles (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id      UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name        VARCHAR(100) NOT NULL,
+    description TEXT,
+    is_system   BOOLEAN DEFAULT FALSE,          -- built-in roles
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE permissions (
+    id       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    resource VARCHAR(100) NOT NULL,             -- e.g. 'employee', 'payroll'
+    action   VARCHAR(50)  NOT NULL,             -- e.g. 'read', 'write', 'delete'
+    UNIQUE (resource, action)
+);
+
+CREATE TABLE role_permissions (
+    role_id       UUID REFERENCES roles(id) ON DELETE CASCADE,
+    permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, permission_id)
+);
+
+CREATE TABLE users (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id          UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    email           VARCHAR(255) NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    role_id         UUID REFERENCES roles(id),
+    is_active       BOOLEAN DEFAULT TRUE,
+    is_verified     BOOLEAN DEFAULT FALSE,
+    mfa_enabled     BOOLEAN DEFAULT FALSE,
+    mfa_secret      TEXT,                       -- TOTP secret (encrypted)
+    last_login_at   TIMESTAMPTZ,
+    failed_attempts INT DEFAULT 0,
+    locked_until    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE refresh_tokens (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,
+    device_info TEXT,
+    ip_address  INET,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked     BOOLEAN DEFAULT FALSE,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE password_reset_tokens (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used       BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE audit_logs (
+    id         BIGSERIAL PRIMARY KEY,
+    org_id     UUID REFERENCES organizations(id),
+    user_id    UUID REFERENCES users(id),
+    action     VARCHAR(100) NOT NULL,
+    resource   VARCHAR(100),
+    resource_id UUID,
+    old_data   JSONB,
+    new_data   JSONB,
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_logs_user    ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_org     ON audit_logs(org_id);
+CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
+
+
+-- ============================================================
+-- MODULE 2: EMPLOYEE MANAGEMENT
+-- ============================================================
+
+CREATE TABLE departments (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id         UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name           VARCHAR(255) NOT NULL,
+    code           VARCHAR(50),
+    parent_dept_id UUID REFERENCES departments(id),
+    head_emp_id    UUID,                        -- FK added after employees table
+    description    TEXT,
+    is_active      BOOLEAN DEFAULT TRUE,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE designations (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id        UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    department_id UUID REFERENCES departments(id),
+    title         VARCHAR(255) NOT NULL,
+    grade         VARCHAR(50),
+    level         INT,                          -- hierarchy level (1=CEO, 2=VP…)
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE employees (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id           UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id          UUID REFERENCES users(id) UNIQUE,
+    emp_code         VARCHAR(50) NOT NULL,
+    first_name       VARCHAR(100) NOT NULL,
+    last_name        VARCHAR(100) NOT NULL,
+    middle_name      VARCHAR(100),
+    dob              DATE,
+    gender           VARCHAR(20),
+    blood_group      VARCHAR(10),
+    phone            VARCHAR(20),
+    personal_email   VARCHAR(255),
+    address          TEXT,
+    city             VARCHAR(100),
+    state            VARCHAR(100),
+    country          VARCHAR(100),
+    pincode          VARCHAR(20),
+    nationality      VARCHAR(100),
+    aadhaar_no_enc   TEXT,                      -- AES-256 encrypted
+    pan_no_enc       TEXT,                      -- AES-256 encrypted
+    passport_no      VARCHAR(50),
+    dept_id          UUID REFERENCES departments(id),
+    designation_id   UUID REFERENCES designations(id),
+    manager_id       UUID REFERENCES employees(id),
+    employment_type  VARCHAR(50) CHECK (employment_type IN
+                       ('full_time','part_time','contract','intern')),
+    work_location    VARCHAR(100),
+    joining_date     DATE NOT NULL,
+    confirmation_date DATE,
+    status           VARCHAR(50) DEFAULT 'active' CHECK (status IN
+                       ('active','probation','notice_period','resigned',
+                        'terminated','absconding')),
+    exit_date        DATE,
+    exit_reason      TEXT,
+    photo_url        TEXT,
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, emp_code)
+);
+
+ALTER TABLE departments
+    ADD CONSTRAINT fk_dept_head FOREIGN KEY (head_emp_id)
+    REFERENCES employees(id) ON DELETE SET NULL;
+
+CREATE TABLE employee_bank_details (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id          UUID REFERENCES employees(id) ON DELETE CASCADE,
+    bank_name       VARCHAR(255) NOT NULL,
+    account_no_enc  TEXT NOT NULL,              -- encrypted
+    ifsc_code       VARCHAR(20) NOT NULL,
+    account_type    VARCHAR(50) CHECK (account_type IN ('savings','current')),
+    is_primary      BOOLEAN DEFAULT TRUE,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE emergency_contacts (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id     UUID REFERENCES employees(id) ON DELETE CASCADE,
+    name       VARCHAR(255) NOT NULL,
+    relation   VARCHAR(100),
+    phone      VARCHAR(20) NOT NULL,
+    email      VARCHAR(255),
+    address    TEXT
+);
+
+CREATE TABLE employee_documents (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id       UUID REFERENCES employees(id) ON DELETE CASCADE,
+    doc_type     VARCHAR(100) NOT NULL,         -- 'aadhaar','pan','offer_letter'…
+    file_url     TEXT NOT NULL,
+    file_name    VARCHAR(255),
+    is_verified  BOOLEAN DEFAULT FALSE,
+    verified_by  UUID REFERENCES users(id),
+    verified_at  TIMESTAMPTZ,
+    uploaded_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE onboarding_tasks (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id        UUID REFERENCES employees(id) ON DELETE CASCADE,
+    task_name     VARCHAR(255) NOT NULL,
+    description   TEXT,
+    assigned_to   UUID REFERENCES users(id),
+    due_date      DATE,
+    completed_at  TIMESTAMPTZ,
+    status        VARCHAR(50) DEFAULT 'pending'
+);
+
+CREATE TABLE custom_fields (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id        UUID REFERENCES organizations(id),
+    module        VARCHAR(100) NOT NULL,        -- 'employee','leave'…
+    field_name    VARCHAR(100) NOT NULL,
+    field_type    VARCHAR(50) NOT NULL,         -- 'text','number','date','select'
+    options       JSONB,                        -- for select type
+    is_required   BOOLEAN DEFAULT FALSE,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE employee_custom_field_values (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id     UUID REFERENCES employees(id) ON DELETE CASCADE,
+    field_id   UUID REFERENCES custom_fields(id) ON DELETE CASCADE,
+    value      TEXT,
+    UNIQUE (emp_id, field_id)
+);
+
+CREATE INDEX idx_employees_org    ON employees(org_id);
+CREATE INDEX idx_employees_dept   ON employees(dept_id);
+CREATE INDEX idx_employees_manager ON employees(manager_id);
+CREATE INDEX idx_employees_status ON employees(status);
+
+
+-- ============================================================
+-- MODULE 3: ATTENDANCE & FACE RECOGNITION
+-- ============================================================
+
+CREATE TABLE shifts (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id       UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name         VARCHAR(100) NOT NULL,
+    start_time   TIME NOT NULL,
+    end_time     TIME NOT NULL,
+    grace_mins   INT DEFAULT 15,
+    is_overnight BOOLEAN DEFAULT FALSE,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE shift_assignments (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE,
+    shift_id       UUID REFERENCES shifts(id),
+    effective_from DATE NOT NULL,
+    effective_to   DATE,
+    created_by     UUID REFERENCES users(id)
+);
+
+CREATE TABLE holidays (
+    id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id    UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name      VARCHAR(255) NOT NULL,
+    date      DATE NOT NULL,
+    type      VARCHAR(50) CHECK (type IN ('national','optional','restricted')),
+    UNIQUE (org_id, date)
+);
+
+CREATE TABLE geofences (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id         UUID REFERENCES organizations(id),
+    name           VARCHAR(255) NOT NULL,
+    latitude       DECIMAL(10,8) NOT NULL,
+    longitude      DECIMAL(11,8) NOT NULL,
+    radius_meters  INT DEFAULT 100,
+    is_active      BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE attendance_records (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id         UUID REFERENCES organizations(id),
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE,
+    date           DATE NOT NULL,
+    check_in       TIMESTAMPTZ,
+    check_out      TIMESTAMPTZ,
+    method         VARCHAR(50) CHECK (method IN
+                     ('face','manual','geo','biometric')),
+    status         VARCHAR(50) CHECK (status IN
+                     ('present','absent','half_day','late','wfh','on_leave')),
+    duration_mins  INT,
+    overtime_mins  INT DEFAULT 0,
+    location_lat   DECIMAL(10,8),
+    location_lng   DECIMAL(11,8),
+    geofence_id    UUID REFERENCES geofences(id),
+    face_conf_score DECIMAL(5,4),               -- confidence from AI (0.0–1.0)
+    is_regularized BOOLEAN DEFAULT FALSE,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (emp_id, date)
+);
+
+CREATE TABLE attendance_regularizations (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id        UUID REFERENCES employees(id) ON DELETE CASCADE,
+    date          DATE NOT NULL,
+    check_in      TIMESTAMPTZ,
+    check_out     TIMESTAMPTZ,
+    reason        TEXT NOT NULL,
+    status        VARCHAR(50) DEFAULT 'pending' CHECK (status IN
+                    ('pending','approved','rejected')),
+    reviewer_id   UUID REFERENCES users(id),
+    review_note   TEXT,
+    reviewed_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- pgvector: face embeddings (512-dim for InsightFace / DeepFace)
+CREATE TABLE face_embeddings (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE UNIQUE,
+    embedding      vector(512) NOT NULL,
+    model_version  VARCHAR(100),
+    enrolled_by    UUID REFERENCES users(id),
+    enrolled_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- HNSW index for fast cosine similarity search
+CREATE INDEX idx_face_embeddings_hnsw
+    ON face_embeddings
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+CREATE INDEX idx_attendance_emp_date ON attendance_records(emp_id, date DESC);
+CREATE INDEX idx_attendance_org_date ON attendance_records(org_id, date DESC);
+
+
+-- ============================================================
+-- MODULE 4: LEAVE MANAGEMENT
+-- ============================================================
+
+CREATE TABLE leave_types (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id              UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name                VARCHAR(100) NOT NULL,
+    code                VARCHAR(20) NOT NULL,
+    max_days_per_year   INT,
+    carry_forward       BOOLEAN DEFAULT FALSE,
+    carry_forward_max   INT,
+    is_paid             BOOLEAN DEFAULT TRUE,
+    requires_doc        BOOLEAN DEFAULT FALSE,
+    min_notice_days     INT DEFAULT 0,
+    gender_applicable   VARCHAR(20) CHECK (gender_applicable IN
+                          ('all','male','female','other')),
+    requires_approval   BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, code)
+);
+
+CREATE TABLE leave_policies (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id            UUID REFERENCES organizations(id),
+    leave_type_id     UUID REFERENCES leave_types(id),
+    designation_id    UUID REFERENCES designations(id),    -- NULL = all
+    department_id     UUID REFERENCES departments(id),     -- NULL = all
+    annual_quota      DECIMAL(5,2) NOT NULL,
+    accrual_type      VARCHAR(50) CHECK (accrual_type IN
+                        ('upfront','monthly','quarterly')),
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE leave_balances (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id          UUID REFERENCES employees(id) ON DELETE CASCADE,
+    leave_type_id   UUID REFERENCES leave_types(id),
+    year            INT NOT NULL,
+    total           DECIMAL(5,2) NOT NULL,
+    used            DECIMAL(5,2) DEFAULT 0,
+    pending         DECIMAL(5,2) DEFAULT 0,
+    available       DECIMAL(5,2) GENERATED ALWAYS AS (total - used - pending) STORED,
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (emp_id, leave_type_id, year)
+);
+
+CREATE TABLE leave_applications (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE,
+    leave_type_id  UUID REFERENCES leave_types(id),
+    from_date      DATE NOT NULL,
+    to_date        DATE NOT NULL,
+    days           DECIMAL(5,2) NOT NULL,
+    session        VARCHAR(20) CHECK (session IN ('full','first_half','second_half')),
+    reason         TEXT,
+    doc_url        TEXT,
+    status         VARCHAR(50) DEFAULT 'pending' CHECK (status IN
+                     ('pending','approved','rejected','cancelled','withdrawn')),
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE leave_approvals (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    application_id  UUID REFERENCES leave_applications(id) ON DELETE CASCADE,
+    approver_id     UUID REFERENCES users(id),
+    level           INT NOT NULL,               -- 1=manager, 2=HR
+    action          VARCHAR(20) CHECK (action IN ('approved','rejected')),
+    comment         TEXT,
+    actioned_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_leave_applications_emp    ON leave_applications(emp_id);
+CREATE INDEX idx_leave_applications_status ON leave_applications(status);
+CREATE INDEX idx_leave_applications_dates  ON leave_applications(from_date, to_date);
+
+
+-- ============================================================
+-- MODULE 5: PAYROLL MANAGEMENT
+-- ============================================================
+
+CREATE TABLE salary_structures (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id      UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name        VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_active   BOOLEAN DEFAULT TRUE,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE salary_components (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    structure_id     UUID REFERENCES salary_structures(id) ON DELETE CASCADE,
+    name             VARCHAR(100) NOT NULL,
+    code             VARCHAR(50) NOT NULL,
+    type             VARCHAR(20) CHECK (type IN ('earning','deduction','stat_deduction')),
+    calc_type        VARCHAR(50) CHECK (calc_type IN
+                       ('fixed','pct_of_basic','pct_of_gross','formula')),
+    value            DECIMAL(10,4),             -- amount or percentage
+    formula          TEXT,                      -- custom formula expression
+    is_taxable       BOOLEAN DEFAULT TRUE,
+    display_order    INT DEFAULT 0
+);
+
+CREATE TABLE employee_salaries (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id        UUID REFERENCES employees(id) ON DELETE CASCADE,
+    structure_id  UUID REFERENCES salary_structures(id),
+    ctc           DECIMAL(15,2) NOT NULL,
+    basic         DECIMAL(15,2) NOT NULL,
+    effective_from DATE NOT NULL,
+    effective_to   DATE,
+    approved_by   UUID REFERENCES users(id),
+    approved_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE payroll_runs (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id       UUID REFERENCES organizations(id),
+    month        INT NOT NULL CHECK (month BETWEEN 1 AND 12),
+    year         INT NOT NULL,
+    status       VARCHAR(50) DEFAULT 'draft' CHECK (status IN
+                   ('draft','processing','pending_approval','approved','disbursed')),
+    total_gross  DECIMAL(15,2),
+    total_deductions DECIMAL(15,2),
+    total_net    DECIMAL(15,2),
+    run_by       UUID REFERENCES users(id),
+    approved_by  UUID REFERENCES users(id),
+    approved_at  TIMESTAMPTZ,
+    disbursed_at TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, month, year)
+);
+
+CREATE TABLE payslips (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id          UUID REFERENCES employees(id) ON DELETE CASCADE,
+    payroll_run_id  UUID REFERENCES payroll_runs(id),
+    working_days    INT,
+    lop_days        DECIMAL(5,2) DEFAULT 0,
+    paid_days       DECIMAL(5,2),
+    gross           DECIMAL(15,2) NOT NULL,
+    total_deductions DECIMAL(15,2) NOT NULL,
+    net_pay         DECIMAL(15,2) NOT NULL,
+    breakdown       JSONB,                      -- {component: amount} map
+    payslip_url     TEXT,
+    generated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE reimbursements (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id       UUID REFERENCES employees(id) ON DELETE CASCADE,
+    category     VARCHAR(100) NOT NULL,         -- 'travel','medical','food'…
+    amount       DECIMAL(10,2) NOT NULL,
+    description  TEXT,
+    receipt_url  TEXT,
+    status       VARCHAR(50) DEFAULT 'pending' CHECK (status IN
+                   ('pending','approved','rejected','paid')),
+    approved_by  UUID REFERENCES users(id),
+    payroll_run_id UUID REFERENCES payroll_runs(id),
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE tax_declarations (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id     UUID REFERENCES employees(id),
+    year       INT NOT NULL,
+    regime     VARCHAR(20) CHECK (regime IN ('old','new')),
+    sections   JSONB,                           -- {section: amount}
+    submitted_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (emp_id, year)
+);
+
+CREATE INDEX idx_payslips_emp        ON payslips(emp_id);
+CREATE INDEX idx_payslips_run        ON payslips(payroll_run_id);
+CREATE INDEX idx_employee_salaries_emp ON employee_salaries(emp_id);
+
+
+-- ============================================================
+-- MODULE 6: RECRUITMENT (ATS)
+-- ============================================================
+
+CREATE TABLE job_postings (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id          UUID REFERENCES organizations(id),
+    dept_id         UUID REFERENCES departments(id),
+    designation_id  UUID REFERENCES designations(id),
+    title           VARCHAR(255) NOT NULL,
+    description     TEXT,
+    requirements    TEXT,
+    type            VARCHAR(50) CHECK (type IN
+                      ('full_time','part_time','contract','internship')),
+    openings        INT DEFAULT 1,
+    min_experience  DECIMAL(4,1),
+    max_experience  DECIMAL(4,1),
+    min_salary      DECIMAL(15,2),
+    max_salary      DECIMAL(15,2),
+    location        VARCHAR(255),
+    is_remote       BOOLEAN DEFAULT FALSE,
+    status          VARCHAR(50) DEFAULT 'open' CHECK (status IN
+                      ('draft','open','paused','closed','cancelled')),
+    posted_by       UUID REFERENCES users(id),
+    posted_at       TIMESTAMPTZ,
+    closed_at       TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE candidates (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id       UUID REFERENCES organizations(id),
+    first_name   VARCHAR(100) NOT NULL,
+    last_name    VARCHAR(100),
+    email        VARCHAR(255) NOT NULL,
+    phone        VARCHAR(20),
+    resume_url   TEXT,
+    linkedin_url TEXT,
+    source       VARCHAR(100),                  -- 'linkedin','naukri','referral'
+    skills       JSONB,
+    parsed_data  JSONB,                         -- AI resume parse output
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, email)
+);
+
+CREATE TABLE applications (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_id            UUID REFERENCES job_postings(id),
+    candidate_id      UUID REFERENCES candidates(id),
+    status            VARCHAR(50) DEFAULT 'applied' CHECK (status IN
+                        ('applied','screening','phone_screen','interview',
+                         'technical','hr_round','offered','hired',
+                         'rejected','withdrawn')),
+    current_ctc       DECIMAL(15,2),
+    expected_ctc      DECIMAL(15,2),
+    notice_period_days INT,
+    referral_emp_id   UUID REFERENCES employees(id),
+    applied_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (job_id, candidate_id)
+);
+
+CREATE TABLE interviews (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    application_id  UUID REFERENCES applications(id) ON DELETE CASCADE,
+    round_no        INT NOT NULL,
+    round_name      VARCHAR(100),
+    interviewer_id  UUID REFERENCES users(id),
+    scheduled_at    TIMESTAMPTZ,
+    duration_mins   INT DEFAULT 60,
+    mode            VARCHAR(20) CHECK (mode IN ('online','offline','phone')),
+    meet_link       TEXT,
+    feedback        TEXT,
+    rating          INT CHECK (rating BETWEEN 1 AND 5),
+    result          VARCHAR(20) CHECK (result IN
+                      ('selected','rejected','on_hold','no_show')),
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE job_offers (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    application_id  UUID REFERENCES applications(id),
+    ctc_offered     DECIMAL(15,2) NOT NULL,
+    joining_date    DATE,
+    offer_url       TEXT,
+    valid_till      DATE,
+    status          VARCHAR(50) DEFAULT 'sent' CHECK (status IN
+                      ('sent','accepted','declined','expired','revoked')),
+    issued_by       UUID REFERENCES users(id),
+    responded_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_applications_job    ON applications(job_id);
+CREATE INDEX idx_applications_status ON applications(status);
+CREATE INDEX idx_interviews_app      ON interviews(application_id);
+
+
+-- ============================================================
+-- MODULE 7: PERFORMANCE MANAGEMENT
+-- ============================================================
+
+CREATE TABLE review_cycles (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id      UUID REFERENCES organizations(id),
+    name        VARCHAR(255) NOT NULL,
+    type        VARCHAR(50) CHECK (type IN ('annual','semi_annual','quarterly')),
+    year        INT NOT NULL,
+    quarter     INT CHECK (quarter BETWEEN 1 AND 4),
+    start_date  DATE NOT NULL,
+    end_date    DATE NOT NULL,
+    status      VARCHAR(50) DEFAULT 'upcoming' CHECK (status IN
+                  ('upcoming','active','completed','archived')),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE goals (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE,
+    cycle_id       UUID REFERENCES review_cycles(id),
+    title          VARCHAR(255) NOT NULL,
+    description    TEXT,
+    metric         VARCHAR(255),
+    target_value   DECIMAL(15,2),
+    current_value  DECIMAL(15,2) DEFAULT 0,
+    weight         DECIMAL(5,2) DEFAULT 100,    -- percentage weight
+    type           VARCHAR(20) CHECK (type IN ('kpi','okr','learning')),
+    status         VARCHAR(50) DEFAULT 'active' CHECK (status IN
+                     ('active','completed','missed','cancelled')),
+    due_date       DATE,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE competencies (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id        UUID REFERENCES organizations(id),
+    name          VARCHAR(255) NOT NULL,
+    description   TEXT,
+    level_criteria JSONB                        -- {1:"basic", 2:"intermediate"…}
+);
+
+CREATE TABLE performance_reviews (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE,
+    cycle_id       UUID REFERENCES review_cycles(id),
+    reviewer_id    UUID REFERENCES users(id),
+    type           VARCHAR(30) CHECK (type IN
+                     ('self','peer','manager','subordinate')),
+    overall_rating DECIMAL(3,2),
+    feedback       TEXT,
+    goal_ratings   JSONB,                       -- [{goal_id, rating, comment}]
+    comp_ratings   JSONB,                       -- [{comp_id, rating}]
+    submitted_at   TIMESTAMPTZ,
+    status         VARCHAR(30) DEFAULT 'pending' CHECK (status IN
+                     ('pending','submitted','acknowledged')),
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (emp_id, cycle_id, reviewer_id, type)
+);
+
+CREATE TABLE pip_plans (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id       UUID REFERENCES employees(id) ON DELETE CASCADE,
+    manager_id   UUID REFERENCES users(id),
+    start_date   DATE NOT NULL,
+    end_date     DATE NOT NULL,
+    reason       TEXT,
+    goals        JSONB,
+    status       VARCHAR(50) CHECK (status IN ('active','completed','extended')),
+    outcome      VARCHAR(50) CHECK (outcome IN ('improved','terminated',NULL)),
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+
+-- ============================================================
+-- MODULE 8: TRAINING & LMS
+-- ============================================================
+
+CREATE TABLE courses (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id       UUID REFERENCES organizations(id),
+    title        VARCHAR(255) NOT NULL,
+    description  TEXT,
+    category     VARCHAR(100),
+    type         VARCHAR(50) CHECK (type IN ('video','pdf','scorm','classroom')),
+    content_url  TEXT,
+    duration_hrs DECIMAL(5,2),
+    is_mandatory BOOLEAN DEFAULT FALSE,
+    created_by   UUID REFERENCES users(id),
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE course_assignments (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    course_id      UUID REFERENCES courses(id) ON DELETE CASCADE,
+    emp_id         UUID REFERENCES employees(id) ON DELETE CASCADE,
+    assigned_by    UUID REFERENCES users(id),
+    due_date       DATE,
+    status         VARCHAR(50) DEFAULT 'assigned' CHECK (status IN
+                     ('assigned','in_progress','completed','overdue')),
+    progress_pct   INT DEFAULT 0 CHECK (progress_pct BETWEEN 0 AND 100),
+    score          DECIMAL(5,2),
+    completed_at   TIMESTAMPTZ,
+    cert_url       TEXT,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (course_id, emp_id)
+);
+
+CREATE TABLE skills (
+    id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id    UUID REFERENCES organizations(id),
+    name      VARCHAR(100) NOT NULL,
+    category  VARCHAR(100),
+    UNIQUE (org_id, name)
+);
+
+CREATE TABLE employee_skills (
+    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    emp_id             UUID REFERENCES employees(id) ON DELETE CASCADE,
+    skill_id           UUID REFERENCES skills(id),
+    proficiency_level  INT CHECK (proficiency_level BETWEEN 1 AND 5),
+    assessed_by        UUID REFERENCES users(id),
+    assessed_at        TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (emp_id, skill_id)
+);
+
+
+-- ============================================================
+-- MODULE 9: AI RAG CHATBOT
+-- ============================================================
+
+CREATE TABLE kb_documents (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id       UUID REFERENCES organizations(id),
+    title        VARCHAR(255) NOT NULL,
+    file_url     TEXT NOT NULL,
+    file_type    VARCHAR(50),                   -- 'pdf','docx','txt'
+    category     VARCHAR(100),
+    chunk_count  INT DEFAULT 0,
+    ingested_at  TIMESTAMPTZ,
+    ingested_by  UUID REFERENCES users(id),
+    is_active    BOOLEAN DEFAULT TRUE,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- pgvector: document chunks with 1536-dim embeddings (OpenAI text-embedding-3-small)
+CREATE TABLE kb_chunks (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    doc_id       UUID REFERENCES kb_documents(id) ON DELETE CASCADE,
+    org_id       UUID REFERENCES organizations(id),
+    content      TEXT NOT NULL,
+    embedding    vector(1536) NOT NULL,
+    chunk_index  INT,
+    token_count  INT,
+    metadata     JSONB,                         -- {page, section, source}
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- HNSW index for fast RAG retrieval
+CREATE INDEX idx_kb_chunks_hnsw
+    ON kb_chunks
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+CREATE INDEX idx_kb_chunks_org ON kb_chunks(org_id);
+
+CREATE TABLE chat_sessions (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    org_id      UUID REFERENCES organizations(id),
+    title       VARCHAR(255),
+    started_at  TIMESTAMPTZ DEFAULT NOW(),
+    ended_at    TIMESTAMPTZ
+);
+
+CREATE TABLE chat_messages (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id        UUID REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    role              VARCHAR(20) CHECK (role IN ('user','assistant','system')),
+    content           TEXT NOT NULL,
+    retrieved_chunks  JSONB,                    -- [{chunk_id, score, content}]
+    model_used        VARCHAR(100),
+    latency_ms        INT,
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_chat_messages_session ON chat_messages(session_id, created_at);
+
+
+-- ============================================================
+-- MODULE 10: NOTIFICATIONS
+-- ============================================================
+
+CREATE TABLE notifications (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id      UUID REFERENCES organizations(id),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    type        VARCHAR(100) NOT NULL,
+    title       VARCHAR(255) NOT NULL,
+    message     TEXT,
+    action_url  TEXT,
+    is_read     BOOLEAN DEFAULT FALSE,
+    read_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE announcements (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id       UUID REFERENCES organizations(id),
+    title        VARCHAR(255) NOT NULL,
+    content      TEXT NOT NULL,
+    author_id    UUID REFERENCES users(id),
+    target_dept  UUID REFERENCES departments(id), -- NULL = all
+    published_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at   TIMESTAMPTZ
+);
+
+CREATE TABLE notification_preferences (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    event_type  VARCHAR(100) NOT NULL,
+    email       BOOLEAN DEFAULT TRUE,
+    push        BOOLEAN DEFAULT TRUE,
+    sms         BOOLEAN DEFAULT FALSE,
+    UNIQUE (user_id, event_type)
+);
+
+CREATE TABLE push_tokens (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+    token      TEXT NOT NULL,
+    platform   VARCHAR(20) CHECK (platform IN ('android','ios','web')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, token)
+);
+
+CREATE INDEX idx_notifications_user   ON notifications(user_id, is_read, created_at DESC);
+CREATE INDEX idx_notifications_org    ON notifications(org_id, created_at DESC);
+
+
+-- ============================================================
+-- MODULE 12: WORKFLOW CONFIGURATION
+-- ============================================================
+
+CREATE TABLE workflow_templates (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id      UUID REFERENCES organizations(id),
+    name        VARCHAR(255) NOT NULL,
+    module      VARCHAR(100) NOT NULL,          -- 'leave','payroll','recruitment'
+    steps       JSONB NOT NULL,                 -- [{step, approver_role, order}]
+    is_active   BOOLEAN DEFAULT TRUE,
+    created_by  UUID REFERENCES users(id),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE approval_requests (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id        UUID REFERENCES organizations(id),
+    workflow_id   UUID REFERENCES workflow_templates(id),
+    module        VARCHAR(100) NOT NULL,
+    resource_id   UUID NOT NULL,               -- FK to the related record
+    requested_by  UUID REFERENCES users(id),
+    current_step  INT DEFAULT 1,
+    status        VARCHAR(50) DEFAULT 'pending' CHECK (status IN
+                    ('pending','approved','rejected','cancelled')),
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE approval_steps (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    approval_request_id UUID REFERENCES approval_requests(id) ON DELETE CASCADE,
+    step_no             INT NOT NULL,
+    approver_id         UUID REFERENCES users(id),
+    action              VARCHAR(20) CHECK (action IN ('approved','rejected')),
+    comment             TEXT,
+    actioned_at         TIMESTAMPTZ
+);
+
+
+-- ============================================================
+-- VIEWS — USEFUL AGGREGATIONS
+-- ============================================================
+
+-- Current active employees with department and designation
+CREATE VIEW v_active_employees AS
+SELECT
+    e.id, e.emp_code, e.first_name, e.last_name,
+    d.name  AS department,
+    des.title AS designation,
+    m.first_name || ' ' || m.last_name AS manager_name,
+    e.joining_date, e.employment_type, e.work_location
+FROM employees e
+LEFT JOIN departments  d   ON d.id = e.dept_id
+LEFT JOIN designations des ON des.id = e.designation_id
+LEFT JOIN employees    m   ON m.id = e.manager_id
+WHERE e.status = 'active';
+
+-- Monthly attendance summary per employee
+CREATE VIEW v_monthly_attendance AS
+SELECT
+    emp_id,
+    DATE_TRUNC('month', date) AS month,
+    COUNT(*) FILTER (WHERE status = 'present')   AS present_days,
+    COUNT(*) FILTER (WHERE status = 'absent')    AS absent_days,
+    COUNT(*) FILTER (WHERE status = 'half_day')  AS half_days,
+    COUNT(*) FILTER (WHERE status = 'wfh')       AS wfh_days,
+    COUNT(*) FILTER (WHERE status = 'late')      AS late_days,
+    SUM(overtime_mins)                           AS total_overtime_mins
+FROM attendance_records
+GROUP BY emp_id, DATE_TRUNC('month', date);
+
+-- Leave balance summary
+CREATE VIEW v_leave_summary AS
+SELECT
+    lb.emp_id,
+    lt.name AS leave_type,
+    lb.year,
+    lb.total, lb.used, lb.pending, lb.available
+FROM leave_balances lb
+JOIN leave_types lt ON lt.id = lb.leave_type_id;
+
+
+-- ============================================================
+-- MIGRATION ORDER
+-- ============================================================
+-- 000001_extensions.up.sql         → pgcrypto, uuid-ossp, vector
+-- 000002_auth_schema.up.sql        → organizations, roles, permissions,
+--                                    users, refresh_tokens, audit_logs
+-- 000003_employee_schema.up.sql    → departments, designations, employees,
+--                                    bank_details, documents, onboarding
+-- 000004_attendance_schema.up.sql  → shifts, holidays, geofences,
+--                                    attendance_records, face_embeddings
+-- 000005_leave_schema.up.sql       → leave_types, leave_balances,
+--                                    leave_applications, leave_approvals
+-- 000006_payroll_schema.up.sql     → salary_structures, components,
+--                                    employee_salaries, payroll_runs, payslips
+-- 000007_recruitment_schema.up.sql → job_postings, candidates, applications,
+--                                    interviews, job_offers
+-- 000008_performance_schema.up.sql → review_cycles, goals, competencies,
+--                                    performance_reviews, pip_plans
+-- 000009_lms_schema.up.sql         → courses, course_assignments,
+--                                    skills, employee_skills
+-- 000010_ai_schema.up.sql          → kb_documents, kb_chunks (vector),
+--                                    chat_sessions, chat_messages
+-- 000011_notification_schema.up.sql→ notifications, announcements,
+--                                    preferences, push_tokens
+-- 000012_workflow_schema.up.sql    → workflow_templates, approval_requests,
+--                                    approval_steps, custom_fields
+-- 000013_views.up.sql              → all CREATE VIEW statements
+-- 000014_seed_data.up.sql          → roles, permissions, leave_types,
+--                                    holiday calendar, shifts
+
+================================================================================
+END OF SCHEMA
+================================================================================

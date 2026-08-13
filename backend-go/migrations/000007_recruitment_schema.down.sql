@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS job_offers;
+DROP TABLE IF EXISTS interviews;
+DROP TABLE IF EXISTS applications;
+DROP TABLE IF EXISTS candidates;
+DROP TABLE IF EXISTS job_postings;

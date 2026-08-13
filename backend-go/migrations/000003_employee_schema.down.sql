@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS employee_custom_field_values;
+DROP TABLE IF EXISTS custom_fields;
+DROP TABLE IF EXISTS onboarding_tasks;
+DROP TABLE IF EXISTS employee_documents;
+DROP TABLE IF EXISTS emergency_contacts;
+DROP TABLE IF EXISTS employee_bank_details;
+ALTER TABLE departments DROP CONSTRAINT IF EXISTS fk_dept_head;
+DROP TABLE IF EXISTS employees;
+DROP TABLE IF EXISTS designations;
+DROP TABLE IF EXISTS departments;
