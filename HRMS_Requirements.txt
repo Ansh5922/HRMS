@@ -1,0 +1,977 @@
+================================================================================
+           HUMAN RESOURCE MANAGEMENT SYSTEM (HRMS) — REQUIREMENTS DOCUMENT
+================================================================================
+Version     : 1.0.0
+Date        : 2026-08-14
+Status      : Draft
+================================================================================
+
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION 1 — PRODUCT OVERVIEW
+════════════════════════════════════════════════════════════════════════════════
+
+1.1 PRODUCT NAME
+    IntelliHR — AI-Powered Human Resource Management System
+
+1.2 PRODUCT DESCRIPTION
+    IntelliHR is a comprehensive, AI-augmented Human Resource Management System
+    designed to streamline and automate the entire employee lifecycle within an
+    organization. It serves as the single source of truth for all HR operations,
+    from recruitment and onboarding to payroll, performance management, and
+    offboarding.
+
+    The system is built with a dual-backend architecture:
+      - A high-performance Go (Golang) core backend handling all primary
+        business logic, APIs, and data operations.
+      - A Python FastAPI AI backend specializing in machine-learning features
+        such as facial recognition-based attendance and a RAG-powered AI
+        assistant.
+
+    IntelliHR is accessible across platforms:
+      - A React.js web dashboard for HR administrators, managers, and executives.
+      - A React Native mobile application for employees and field managers.
+
+    The database layer uses PostgreSQL with the pgvector extension to support
+    both relational HR data and vector embeddings required for the AI features.
+
+1.3 TARGET USERS
+    ┌─────────────────────┬──────────────────────────────────────────────────┐
+    │ User Role           │ Description                                      │
+    ├─────────────────────┼──────────────────────────────────────────────────┤
+    │ Super Admin         │ Full system access, company-level configuration  │
+    │ HR Manager          │ Manages employees, payroll, leaves, recruitment  │
+    │ Department Manager  │ Team oversight, attendance, performance reviews  │
+    │ Employee            │ Self-service portal, attendance, payslips, chat  │
+    │ Recruiter           │ Job postings, candidate management, interviews   │
+    │ Finance Team        │ Payroll approval, financial reports              │
+    └─────────────────────┴──────────────────────────────────────────────────┘
+
+1.4 CORE TECHNOLOGY STACK
+    ┌──────────────────────┬───────────────────────────────────────────────┐
+    │ Layer                │ Technology                                    │
+    ├──────────────────────┼───────────────────────────────────────────────┤
+    │ Web Frontend         │ React.js (Vite), TypeScript, TailwindCSS      │
+    │ Mobile Frontend      │ React Native (Expo), TypeScript               │
+    │ Main Backend         │ Golang (Gin/Fiber framework), REST + WebSocket│
+    │ AI Backend           │ Python FastAPI, LangChain, DeepFace           │
+    │ Primary Database     │ PostgreSQL 16                                 │
+    │ Vector Store         │ pgvector extension on PostgreSQL              │
+    │ Cache                │ Redis                                         │
+    │ File Storage         │ AWS S3 / MinIO (self-hosted)                  │
+    │ Authentication       │ JWT + OAuth2.0 (Google, Microsoft)            │
+    │ Message Queue        │ RabbitMQ / Apache Kafka                       │
+    │ Containerization     │ Docker + Docker Compose                       │
+    │ Orchestration        │ Kubernetes (production)                       │
+    │ CI/CD                │ GitHub Actions                                │
+    └──────────────────────┴───────────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION 2 — FUNCTIONAL MODULES
+════════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 1: AUTHENTICATION & AUTHORIZATION
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Central security gateway for all users across web and mobile platforms.
+    Manages identity, session, permissions, and audit trails.
+
+Features:
+    1.1 Multi-factor Authentication (MFA) — TOTP / SMS OTP
+    1.2 Role-Based Access Control (RBAC) with fine-grained permissions
+    1.3 JWT-based stateless authentication with refresh token rotation
+    1.4 OAuth2.0 Social Login (Google Workspace, Microsoft Azure AD)
+    1.5 Single Sign-On (SSO) support for enterprise clients
+    1.6 Password policies (strength, expiry, history)
+    1.7 Session management with device tracking
+    1.8 Audit log of all login/logout and permission-change events
+    1.9 Account lockout after N failed attempts
+    1.10 API key management for integrations
+
+Database Entities:
+    - users (id, email, password_hash, role_id, is_active, created_at)
+    - roles (id, name, description)
+    - permissions (id, resource, action)
+    - role_permissions (role_id, permission_id)
+    - refresh_tokens (id, user_id, token_hash, expires_at, revoked)
+    - audit_logs (id, user_id, action, resource, ip_address, timestamp)
+
+API Endpoints (Go Backend):
+    POST   /api/v1/auth/register
+    POST   /api/v1/auth/login
+    POST   /api/v1/auth/refresh
+    POST   /api/v1/auth/logout
+    POST   /api/v1/auth/forgot-password
+    POST   /api/v1/auth/reset-password
+    GET    /api/v1/auth/me
+    PATCH  /api/v1/auth/change-password
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 2: EMPLOYEE MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Core module managing the complete employee lifecycle — from onboarding
+    through separation. Maintains the central employee registry used by all
+    other modules.
+
+Features:
+    2.1  Employee profile creation with full personal & professional details
+    2.2  Employee ID generation (auto-increment + custom prefix)
+    2.3  Document management (Aadhaar, PAN, offer letter, contracts, etc.)
+    2.4  Department and designation management
+    2.5  Reporting hierarchy (manager-subordinate tree)
+    2.6  Employment type tracking (full-time, part-time, contract, intern)
+    2.7  Employee status lifecycle (Active, Probation, Notice Period, Exit)
+    2.8  Emergency contact management
+    2.9  Bank account and payment details (encrypted at rest)
+    2.10 Employee photo management (used by face recognition module)
+    2.11 Onboarding workflow with checklist and task assignment
+    2.12 Offboarding and exit interview workflow
+    2.13 Employee directory with search and filters
+    2.14 Org chart visualization
+    2.15 Bulk import/export via CSV/Excel
+
+Database Entities:
+    - employees (id, user_id, emp_code, first_name, last_name, dob,
+                 gender, phone, address, joining_date, status,
+                 department_id, designation_id, manager_id,
+                 employment_type, created_at, updated_at)
+    - departments (id, name, head_id, parent_dept_id, description)
+    - designations (id, title, grade, department_id)
+    - employee_documents (id, emp_id, doc_type, file_url, verified_at)
+    - employee_bank_details (id, emp_id, bank_name, account_no_encrypted,
+                             ifsc, account_type)
+    - emergency_contacts (id, emp_id, name, relation, phone)
+    - onboarding_tasks (id, emp_id, task_name, assigned_to, due_date,
+                        completed_at)
+
+API Endpoints (Go Backend):
+    GET    /api/v1/employees
+    POST   /api/v1/employees
+    GET    /api/v1/employees/:id
+    PUT    /api/v1/employees/:id
+    DELETE /api/v1/employees/:id
+    POST   /api/v1/employees/:id/documents
+    GET    /api/v1/employees/:id/documents
+    GET    /api/v1/departments
+    POST   /api/v1/departments
+    GET    /api/v1/org-chart
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 3: ATTENDANCE & TIME TRACKING (AI-POWERED)
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Tracks employee attendance through multiple mechanisms: AI facial
+    recognition (primary), manual check-in/out, and geofenced mobile
+    check-in. The FastAPI AI service handles all face-detection workloads
+    and communicates results back to the Go core service.
+
+Features:
+    3.1  Facial recognition check-in/check-out via mobile camera
+    3.2  Anti-spoofing detection (liveness check)
+    3.3  Geofencing-based attendance for field employees
+    3.4  Manual attendance entry (with manager approval)
+    3.5  Shift management (morning, evening, night, flexible)
+    3.6  Shift rotation scheduling
+    3.7  Overtime calculation and tracking
+    3.8  Break time tracking
+    3.9  Work-from-home / remote day logging
+    3.10 Attendance regularization requests
+    3.11 Real-time attendance dashboard (who is in/out)
+    3.12 Monthly attendance reports with anomaly flags
+    3.13 Integration with payroll for pay calculation
+    3.14 Holiday calendar management (national + company-specific)
+    3.15 Face enrollment (registering employee face embeddings on joining)
+
+AI Sub-System (FastAPI):
+    - Face detection and landmark extraction using DeepFace / InsightFace
+    - Face embedding generation and storage as pgvector vectors
+    - Cosine similarity search for identity matching
+    - Liveness detection (eye-blink / depth estimation)
+    - Confidence score threshold configuration per org
+
+Database Entities:
+    - attendance_records (id, emp_id, date, check_in, check_out,
+                          method [face/manual/geo], status, duration_mins,
+                          overtime_mins, location_lat, location_lng)
+    - face_embeddings (id, emp_id, embedding vector(512), model_version,
+                       enrolled_at)  -- uses pgvector
+    - shifts (id, name, start_time, end_time, grace_mins, org_id)
+    - shift_assignments (id, emp_id, shift_id, effective_from, effective_to)
+    - attendance_regularizations (id, emp_id, date, reason,
+                                   status [pending/approved/rejected],
+                                   reviewer_id)
+    - holidays (id, name, date, type [national/optional], org_id)
+    - geofences (id, org_id, name, lat, lng, radius_meters)
+
+API Endpoints:
+    Go Backend:
+        GET    /api/v1/attendance
+        POST   /api/v1/attendance/manual
+        GET    /api/v1/attendance/employee/:id
+        GET    /api/v1/attendance/today
+        POST   /api/v1/attendance/regularize
+        GET    /api/v1/shifts
+        POST   /api/v1/shifts
+        POST   /api/v1/attendance/geo-checkin
+        GET    /api/v1/attendance/reports
+
+    FastAPI AI Service:
+        POST   /ai/v1/face/enroll         → Register face embedding
+        POST   /ai/v1/face/verify         → Match face & return emp_id
+        POST   /ai/v1/face/liveness-check → Anti-spoofing check
+        GET    /ai/v1/face/embeddings/:id → Get embedding info
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 4: LEAVE MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Manages all types of employee leave — application, approval workflow,
+    balance tracking, and leave calendar.
+
+Features:
+    4.1  Configurable leave types (Annual, Sick, Casual, Maternity,
+         Paternity, Compensatory, Unpaid, etc.)
+    4.2  Leave application with date range, reason, and document upload
+    4.3  Multi-level approval workflow (Manager → HR)
+    4.4  Leave balance tracking with carry-forward rules
+    4.5  Leave calendar for team visibility
+    4.6  Auto-deduction of leaves from payroll for LOP (Loss of Pay)
+    4.7  Leave encashment processing
+    4.8  Holiday-aware leave calculation
+    4.9  Email and push notification for application/approval/rejection
+    4.10 Leave policy configuration per designation or department
+    4.11 Bulk leave credit for new year / joining accrual
+    4.12 Compensatory off generation from overtime approval
+    4.13 Leave analytics — department-wise usage, trends
+
+Database Entities:
+    - leave_types (id, name, max_days_per_year, carry_forward,
+                   is_paid, requires_approval, gender_applicable)
+    - leave_balances (id, emp_id, leave_type_id, year, total,
+                      used, pending, available)
+    - leave_applications (id, emp_id, leave_type_id, from_date, to_date,
+                          days, reason, doc_url, status, created_at)
+    - leave_approvals (id, application_id, approver_id, level,
+                       action [approved/rejected], comment, actioned_at)
+    - leave_policies (id, org_id, leave_type_id, designation_id,
+                      annual_quota, accrual_type)
+
+API Endpoints (Go Backend):
+    GET    /api/v1/leaves
+    POST   /api/v1/leaves/apply
+    GET    /api/v1/leaves/:id
+    PATCH  /api/v1/leaves/:id/approve
+    PATCH  /api/v1/leaves/:id/reject
+    GET    /api/v1/leaves/balance
+    GET    /api/v1/leaves/calendar
+    GET    /api/v1/leaves/types
+    POST   /api/v1/leaves/types
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 5: PAYROLL MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    End-to-end payroll processing including salary structure definition,
+    statutory compliance (PF, ESI, TDS, PT), payslip generation, and
+    disbursement integration.
+
+Features:
+    5.1  Configurable salary structure (Basic, HRA, DA, LTA, bonuses,
+         deductions)
+    5.2  CTC breakdown and cost-to-company computation
+    5.3  Automated monthly payroll run
+    5.4  Loss of Pay (LOP) integration with attendance and leaves
+    5.5  Statutory deductions: PF, ESI, Professional Tax, TDS/Income Tax
+    5.6  Form 16, Form 12BB generation (India compliance)
+    5.7  Payslip PDF generation and employee self-service download
+    5.8  Payroll approval workflow (HR → Finance → MD)
+    5.9  Salary revision / increment management
+    5.10 Arrear calculation on revisions
+    5.11 Full and Final settlement computation
+    5.12 Reimbursement claims processing
+    5.13 Direct bank transfer file generation (NEFT/RTGS format)
+    5.14 Multi-currency support for global companies
+    5.15 Payroll analytics — cost center reports, headcount cost
+
+Database Entities:
+    - salary_structures (id, name, description, org_id)
+    - salary_components (id, structure_id, name, type [earning/deduction],
+                         calculation_type [fixed/percent_of_basic],
+                         value, is_taxable)
+    - employee_salaries (id, emp_id, structure_id, ctc, basic,
+                         effective_from, approved_by)
+    - payroll_runs (id, month, year, org_id, status [draft/processing/
+                    approved/disbursed], total_amount, run_by, run_at)
+    - payslips (id, emp_id, payroll_run_id, gross, deductions, net_pay,
+                working_days, lop_days, payslip_url, generated_at)
+    - reimbursements (id, emp_id, category, amount, description,
+                      receipt_url, status, approved_by)
+
+API Endpoints (Go Backend):
+    GET    /api/v1/payroll/run
+    POST   /api/v1/payroll/run
+    GET    /api/v1/payroll/run/:id
+    PATCH  /api/v1/payroll/run/:id/approve
+    GET    /api/v1/payslips/employee/:id
+    GET    /api/v1/payslips/:id/download
+    GET    /api/v1/salary/employee/:id
+    PUT    /api/v1/salary/employee/:id
+    POST   /api/v1/reimbursements
+    GET    /api/v1/reimbursements
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 6: RECRUITMENT MANAGEMENT (ATS)
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Applicant Tracking System to manage the full hiring pipeline — from
+    job creation to offer letter generation.
+
+Features:
+    6.1  Job requisition creation with approval workflow
+    6.2  Job posting to internal portal and external boards (LinkedIn, etc.)
+    6.3  Application collection and centralized candidate portal
+    6.4  Resume parsing (AI-assisted via FastAPI)
+    6.5  Screening questionnaires
+    6.6  Interview scheduling with calendar integration
+    6.7  Multi-round interview feedback forms
+    6.8  Offer letter generation from templates
+    6.9  Background verification workflow
+    6.10 New hire → Employee conversion
+    6.11 Recruitment analytics (time-to-hire, source effectiveness,
+         funnel drop-off)
+    6.12 Talent pool / candidate database for future roles
+
+Database Entities:
+    - job_postings (id, title, department_id, description, requirements,
+                    type, openings, status, posted_by, posted_at,
+                    closed_at)
+    - candidates (id, name, email, phone, resume_url, source,
+                  linkedin_url, created_at)
+    - applications (id, job_id, candidate_id, status [applied/screening/
+                    interview/offered/hired/rejected], applied_at)
+    - interviews (id, application_id, round, interviewer_id, scheduled_at,
+                  mode [online/offline], feedback, rating, result)
+    - offers (id, application_id, ctc_offered, joining_date,
+              offer_url, status [sent/accepted/declined/expired])
+
+API Endpoints (Go Backend):
+    GET    /api/v1/jobs
+    POST   /api/v1/jobs
+    GET    /api/v1/jobs/:id
+    POST   /api/v1/jobs/:id/apply
+    GET    /api/v1/applications
+    PATCH  /api/v1/applications/:id/status
+    POST   /api/v1/interviews
+    PUT    /api/v1/interviews/:id/feedback
+    POST   /api/v1/offers
+    PATCH  /api/v1/offers/:id/accept
+
+    FastAPI AI Service:
+    POST   /ai/v1/resume/parse   → Extract structured data from resume PDF
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 7: PERFORMANCE MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Continuous performance management with goal setting, 360-degree
+    feedback, KPI tracking, and appraisal cycle management.
+
+Features:
+    7.1  OKR (Objective & Key Results) / KPI goal setting
+    7.2  Quarterly and annual performance review cycles
+    7.3  360-degree feedback (self, peer, manager, subordinate)
+    7.4  Performance rating scale configuration
+    7.5  Improvement Plan (PIP) management
+    7.6  Promotion and increment recommendation workflow
+    7.7  Bell curve normalization for ratings
+    7.8  Competency framework definition
+    7.9  Real-time goal progress tracking
+    7.10 Performance analytics and leaderboards
+    7.11 AI-generated performance summaries (RAG chatbot)
+
+Database Entities:
+    - review_cycles (id, name, year, quarter, type, start_date,
+                     end_date, status, org_id)
+    - goals (id, emp_id, cycle_id, title, description, target,
+             current_value, weight, status)
+    - reviews (id, emp_id, cycle_id, reviewer_id, type
+               [self/peer/manager], rating, feedback, submitted_at)
+    - competencies (id, name, description, level_criteria)
+
+API Endpoints (Go Backend):
+    GET    /api/v1/performance/cycles
+    POST   /api/v1/performance/cycles
+    GET    /api/v1/goals/employee/:id
+    POST   /api/v1/goals
+    PUT    /api/v1/goals/:id
+    POST   /api/v1/reviews
+    GET    /api/v1/reviews/cycle/:id
+    GET    /api/v1/performance/reports
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 8: TRAINING & DEVELOPMENT (LMS)
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Learning Management System for employee skill development, mandatory
+    compliance training, and training need identification.
+
+Features:
+    8.1  Course creation and content hosting (video, PDF, SCORM)
+    8.2  Course assignment to employees / departments
+    8.3  Quizzes, assessments, and certifications
+    8.4  Training calendar
+    8.5  Training need analysis from performance reviews
+    8.6  External training request and reimbursement
+    8.7  Completion tracking and progress reports
+    8.8  Skill matrix per employee
+
+Database Entities:
+    - courses (id, title, description, category, duration_hrs,
+               content_url, created_by, created_at)
+    - course_assignments (id, course_id, emp_id, assigned_by,
+                          due_date, status, completed_at, score)
+    - skills (id, name, category)
+    - employee_skills (id, emp_id, skill_id, proficiency_level,
+                       assessed_at)
+
+API Endpoints (Go Backend):
+    GET    /api/v1/courses
+    POST   /api/v1/courses
+    POST   /api/v1/courses/:id/assign
+    GET    /api/v1/courses/employee/:id
+    PATCH  /api/v1/courses/assignment/:id/complete
+    GET    /api/v1/skills
+    GET    /api/v1/employees/:id/skills
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 9: AI CHATBOT — RAG-BASED HR ASSISTANT
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    An intelligent HR assistant powered by a Retrieval-Augmented Generation
+    (RAG) pipeline. Employees and HR staff can query HR policies, get
+    payslip summaries, check leave balances, understand processes, and get
+    personalized answers — all through a conversational interface on web
+    and mobile.
+
+Features:
+    9.1  Natural language query interface (chat UI)
+    9.2  RAG over HR documents (policies, handbooks, SOPs, FAQs)
+    9.3  Personalized responses using employee context (leave balance,
+         payslip, attendance)
+    9.4  Conversation history per user session
+    9.5  Document ingestion pipeline (PDF/DOCX → chunks → embeddings)
+    9.6  Admin panel to upload/manage knowledge base documents
+    9.7  Confidence score and source citations in responses
+    9.8  Fallback to HR ticket creation on unanswered queries
+    9.9  Multi-language support (English + regional languages)
+    9.10 Voice input support (mobile app)
+
+Technical Architecture (FastAPI):
+    - Document ingestion: PyPDFLoader → text splitting → embedding
+      via OpenAI/local model → store in pgvector
+    - Query flow: User query → embedding → pgvector similarity search
+      → top-K chunks → LLM prompt → response
+    - LLM: OpenAI GPT-4o / Ollama (self-hosted llama3)
+    - Embedding model: text-embedding-3-small / instructor-xl
+    - Framework: LangChain with PGVector retriever
+
+Database Entities:
+    - kb_documents (id, title, file_url, category, ingested_at,
+                    chunk_count, org_id)
+    - kb_chunks (id, doc_id, content, embedding vector(1536),
+                 metadata jsonb)  -- pgvector
+    - chat_sessions (id, user_id, started_at)
+    - chat_messages (id, session_id, role [user/assistant],
+                     content, retrieved_chunks jsonb, created_at)
+
+API Endpoints (FastAPI):
+    POST   /ai/v1/chat/message       → Send message, get RAG response
+    GET    /ai/v1/chat/history/:sid  → Get session history
+    POST   /ai/v1/chat/session       → Create new session
+    POST   /ai/v1/kb/upload          → Upload document to knowledge base
+    GET    /ai/v1/kb/documents       → List knowledge base docs
+    DELETE /ai/v1/kb/documents/:id   → Remove document + chunks
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 10: NOTIFICATIONS & COMMUNICATION
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Centralized communication hub managing all system notifications,
+    announcements, and email/push/SMS dispatches.
+
+Features:
+    10.1 In-app notification center
+    10.2 Email notifications (via SMTP / SendGrid)
+    10.3 Push notifications (mobile — FCM/APNs)
+    10.4 SMS alerts for critical events (via Twilio / AWS SNS)
+    10.5 Company-wide announcements with audience targeting
+    10.6 Notification preference management per user
+    10.7 Event-driven triggers (leave approved, payslip ready, etc.)
+    10.8 Notification read/unread state with badge counts
+    10.9 Templates for all notification types
+
+Database Entities:
+    - notifications (id, user_id, type, title, message,
+                     is_read, created_at, action_url)
+    - announcements (id, title, content, author_id, target_dept,
+                     published_at, expires_at)
+    - notification_preferences (id, user_id, channel [email/push/sms],
+                                 event_type, is_enabled)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 11: REPORTING & ANALYTICS DASHBOARD
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    Executive and operational dashboards with real-time and historical
+    analytics across all HR metrics.
+
+Features:
+    11.1 HR overview dashboard (headcount, attrition, cost)
+    11.2 Attendance analytics (punctuality, absenteeism heatmaps)
+    11.3 Leave trend analysis
+    11.4 Payroll cost reports (department, grade, month)
+    11.5 Recruitment funnel and time-to-hire reports
+    11.6 Performance rating distribution reports
+    11.7 Training completion rates
+    11.8 Custom report builder with field selection
+    11.9 Scheduled report emails
+    11.10 Export to PDF / Excel / CSV
+    11.11 Role-based report visibility
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 12: ORGANIZATION & CONFIGURATION MANAGEMENT
+────────────────────────────────────────────────────────────────────────────────
+Description:
+    System-wide configuration module for super admins to set up the
+    company structure, policies, and system behavior.
+
+Features:
+    12.1 Company profile setup (name, logo, address, timezone)
+    12.2 Multi-company / multi-branch support
+    12.3 Financial year configuration
+    12.4 Shift templates and work schedule configuration
+    12.5 Leave policy engine
+    12.6 Approval workflow builder (no-code drag-and-drop)
+    12.7 Custom field builder for employee profiles
+    12.8 Salary structure templates
+    12.9 Statutory configuration (PF, ESI rates, tax slabs)
+    12.10 System audit trail viewer
+
+    Database Entities:
+    - organizations (id, name, logo_url, address, timezone,
+                     financial_year_start, created_at)
+    - workflow_templates (id, org_id, module, steps jsonb,
+                          created_by, created_at)
+    - custom_fields (id, org_id, module, field_name, field_type,
+                     options jsonb, is_required)
+
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION 3 — NON-FUNCTIONAL REQUIREMENTS
+════════════════════════════════════════════════════════════════════════════════
+
+3.1 PERFORMANCE
+    - API response time < 200ms for standard CRUD operations (P99)
+    - Face recognition response time < 2 seconds (P95)
+    - RAG chatbot response time < 5 seconds (P90)
+    - Support 10,000 concurrent users in production
+
+3.2 SECURITY
+    - All data encrypted at rest (AES-256) and in transit (TLS 1.3)
+    - Sensitive fields (bank account, Aadhaar) encrypted at column level
+    - OWASP Top 10 compliance
+    - SQL injection and XSS prevention
+    - Rate limiting on all public-facing APIs
+    - Penetration testing before production deployment
+
+3.3 SCALABILITY
+    - Horizontal scaling via Kubernetes pods
+    - Database read replicas for analytics workloads
+    - Auto-scaling based on CPU/memory metrics
+    - CDN for static assets
+
+3.4 AVAILABILITY
+    - 99.9% uptime SLA
+    - Automated health checks and restart policies
+    - Database backups every 4 hours with 30-day retention
+    - Multi-AZ deployment for production
+
+3.5 COMPLIANCE
+    - GDPR (right to access, right to deletion)
+    - India IT Act compliance
+    - Data residency configuration
+    - PII data masking in logs
+
+3.6 USABILITY
+    - WCAG 2.1 AA accessibility compliance
+    - Mobile-responsive web design
+    - Support for modern browsers (Chrome, Firefox, Safari, Edge)
+    - Offline-capable mobile app for attendance
+
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION 4 — IMPLEMENTATION PLAN
+════════════════════════════════════════════════════════════════════════════════
+
+Following the prescribed workflow:
+    Database Schema → DB Creation → DB Integration → Module Development
+    → Face Recognition → FastAPI ↔ Go Integration → Frontend + Chatbot
+    → Deployment
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 1: DATABASE SCHEMA DESIGN (Week 1–2)
+────────────────────────────────────────────────────────────────────────────────
+Deliverables:
+    □ Complete ER diagram for all 12 modules
+    □ PostgreSQL DDL scripts for all tables
+    □ pgvector extension setup and vector column definitions
+    □ Seed data scripts (roles, permissions, leave types, etc.)
+    □ Database migration tool selection: golang-migrate or goose
+
+Tasks:
+    1. Define all entities and relationships (ERD in dbdiagram.io)
+    2. Write CREATE TABLE SQL scripts with constraints and indexes
+    3. Add pgvector extension: CREATE EXTENSION IF NOT EXISTS vector;
+    4. Define face_embeddings and kb_chunks tables with vector columns
+    5. Design indexes (B-tree for FKs, HNSW for vector similarity)
+    6. Write migration files (000001_init_schema.up.sql, etc.)
+    7. Write seed scripts for roles, permissions, leave types, holidays
+    8. Peer review all schema decisions
+
+Directory Structure:
+    /database
+    ├── migrations/
+    │   ├── 000001_auth_schema.up.sql
+    │   ├── 000002_employee_schema.up.sql
+    │   ├── 000003_attendance_schema.up.sql
+    │   └── ... (one file per module)
+    ├── seeds/
+    │   ├── roles.sql
+    │   ├── permissions.sql
+    │   └── leave_types.sql
+    └── ERD.dbml
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 2: DATABASE CREATION (Week 2)
+────────────────────────────────────────────────────────────────────────────────
+Deliverables:
+    □ PostgreSQL instance running (Docker or cloud RDS)
+    □ pgvector installed and verified
+    □ All migrations applied and verified
+    □ Seed data loaded
+    □ Backup/restore procedure documented
+
+Tasks:
+    1. Set up PostgreSQL 16 via Docker Compose
+    2. Install pgvector: git clone → make install
+    3. Create databases: hrms_dev, hrms_test, hrms_prod
+    4. Run migrations (golang-migrate up)
+    5. Verify all tables, indexes, and vector columns
+    6. Load seed data and verify
+    7. Set up pg_hba.conf with secure access rules
+    8. Configure connection pooling with PgBouncer
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 3: DATABASE INTEGRATION TO BOTH BACKENDS (Week 3)
+────────────────────────────────────────────────────────────────────────────────
+
+Go Backend Integration:
+    1. Initialize Go module: go mod init github.com/org/hrms-backend
+    2. Add dependencies: pgx/v5, sqlc or gorm, golang-migrate
+    3. Configure DB connection pool (pgxpool) with env-based config
+    4. Generate typed SQL code with sqlc from migration files
+    5. Write repository interfaces for each module
+    6. Unit-test DB layer with testcontainers-go
+
+FastAPI AI Backend Integration:
+    1. Set up Python virtual environment + requirements.txt
+    2. Add dependencies: asyncpg, SQLAlchemy 2.x, pgvector-python
+    3. Configure async DB session factory
+    4. Implement repository classes for face_embeddings & kb_chunks
+    5. Test vector insert and cosine similarity query
+    6. Set up Alembic for AI service migrations (separate schema)
+
+Directory Structure:
+    /backend-go/
+    ├── cmd/server/main.go
+    ├── internal/
+    │   ├── config/
+    │   ├── db/            ← connection pool, migrations runner
+    │   ├── repository/    ← DB access layer per module
+    │   ├── service/       ← business logic
+    │   ├── handler/       ← HTTP handlers (Gin/Fiber)
+    │   └── middleware/    ← auth, logging, rate-limit
+    ├── pkg/
+    ├── migrations/
+    └── go.mod
+
+    /backend-ai/           ← FastAPI service
+    ├── app/
+    │   ├── api/routes/
+    │   ├── core/config.py
+    │   ├── db/session.py
+    │   ├── models/        ← SQLAlchemy ORM models
+    │   ├── services/      ← face recognition, RAG pipeline
+    │   └── schemas/       ← Pydantic request/response models
+    ├── requirements.txt
+    └── Dockerfile
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 4: CREATING CORE MODULES (Week 4–8)
+────────────────────────────────────────────────────────────────────────────────
+Development order (Go backend):
+
+    Week 4:
+        □ Module 1: Auth & Authorization
+            - JWT middleware, refresh tokens, RBAC permission guards
+            - Bcrypt hashing, MFA with TOTP
+        □ Module 12: Organization & Configuration
+            - Company setup, multi-tenant plumbing (org_id on all tables)
+
+    Week 5:
+        □ Module 2: Employee Management
+            - CRUD APIs, document upload to S3/MinIO, org chart
+            - Onboarding/offboarding workflow engine
+        □ Module 10: Notifications
+            - Email service (SMTP), in-app notification store
+            - Event bus integration (RabbitMQ publisher/subscriber)
+
+    Week 6:
+        □ Module 4: Leave Management
+            - Leave type config, balance engine, multi-level approval
+            - LOP calculation hooks for payroll
+        □ Module 3 (non-AI part): Attendance
+            - Shift management, manual check-in, regularization
+
+    Week 7:
+        □ Module 5: Payroll Management
+            - Salary structure engine, statutory deductions calculator
+            - Payslip PDF generation, payroll run workflow
+        □ Module 6: Recruitment (ATS)
+            - Job postings, application pipeline, interview scheduling
+            - Offer letter generation
+
+    Week 8:
+        □ Module 7: Performance Management
+            - OKR/KPI CRUD, review cycles, 360-degree feedback
+        □ Module 8: Training & LMS
+            - Course management, assignment, completion tracking
+        □ Module 11: Reporting & Analytics
+            - Aggregation queries, report generation, export APIs
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 5: FACE RECOGNITION SYSTEM (Week 8–10, FastAPI)
+────────────────────────────────────────────────────────────────────────────────
+Deliverables:
+    □ Face enrollment endpoint (stores embedding in pgvector)
+    □ Face verification endpoint (cosine similarity search)
+    □ Liveness detection
+    □ Anti-spoofing safeguards
+
+Tasks:
+    1. Set up InsightFace or DeepFace in FastAPI
+    2. Implement /ai/v1/face/enroll:
+       - Accept image → detect face → compute 512-d embedding
+       - Store in face_embeddings with pgvector
+    3. Implement /ai/v1/face/verify:
+       - Accept image → compute embedding
+       - Run cosine similarity search: SELECT ... ORDER BY embedding <=> query_vec LIMIT 1
+       - Return matched employee + confidence score
+    4. Implement liveness detection (eye-blink / model-based)
+    5. Add confidence threshold check (reject if score < 0.75)
+    6. Wrap with FastAPI dependency injection and auth token validation
+    7. Write integration tests with sample face dataset
+    8. Performance benchmark: target < 2s per verification
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 6: FASTAPI ↔ GO BACKEND INTEGRATION (Week 10–11)
+────────────────────────────────────────────────────────────────────────────────
+Deliverables:
+    □ Secure internal service communication
+    □ Go attendance module calls FastAPI for face verification
+    □ Go recruitment module calls FastAPI for resume parsing
+    □ Response handling and fallback logic in Go
+
+Tasks:
+    1. Define shared internal API contract (OpenAPI spec)
+    2. Implement service-to-service authentication (shared secret / mTLS)
+    3. Go HTTP client wrapper for FastAPI calls (with retry + timeout)
+    4. In Go attendance handler:
+       - Receive image upload → call FastAPI /face/verify
+       - On success → create attendance record → return response
+    5. In Go recruitment handler:
+       - Receive resume upload → call FastAPI /resume/parse
+       - Store structured candidate data
+    6. Implement circuit breaker pattern (go-resilience)
+    7. Add fallback: if AI service is down, allow manual attendance
+    8. Integration tests: Go service → FastAPI → response
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 7: FRONTEND CREATION (Week 11–14)
+────────────────────────────────────────────────────────────────────────────────
+
+7A. React.js Web Application:
+    Tech: React.js (Vite) + TypeScript + TailwindCSS + React Query +
+          Zustand + React Hook Form + Chart.js / Recharts
+
+    Week 11–12:
+        □ Project setup, routing (React Router v6), auth flow
+        □ Design system: color tokens, typography, components library
+        □ Login, MFA, password reset pages
+        □ HR Admin dashboard with KPI widgets
+        □ Employee management pages (list, profile, create/edit)
+        □ Department and org chart view
+
+    Week 12–13:
+        □ Attendance module UI (dashboard, reports, regularization)
+        □ Leave management (apply, approve, balance view, calendar)
+        □ Payroll UI (payslip viewer, payroll run management)
+        □ Recruitment pipeline (kanban board for application stages)
+
+    Week 13–14:
+        □ Performance management UI (goals, review cycle, feedback)
+        □ Training portal (course listing, assignment, progress)
+        □ Analytics dashboards with charts
+        □ Notification center
+        □ Settings and configuration pages
+
+7B. React Native Mobile Application:
+    Tech: React Native (Expo) + TypeScript + Expo Router +
+          React Query + Zustand + Expo Camera + react-native-maps
+
+    Week 12–13:
+        □ Expo project setup, navigation (Expo Router tabs)
+        □ Authentication screens (login, biometric fallback)
+        □ Employee home dashboard (upcoming events, quick actions)
+        □ Face Attendance screen:
+            - Open camera → capture selfie
+            - Send to FastAPI via Go proxy → display result
+        □ Geofence check-in (expo-location + maps)
+        □ Leave application and approval screens
+
+    Week 13–14:
+        □ Payslip viewer (PDF in-app render)
+        □ Notification center with push notification setup (FCM)
+        □ Chat screen for AI HR Assistant
+        □ Profile and document viewer
+        □ Offline sync queue for attendance (if network fails)
+
+7C. RAG Chatbot UI (integrated into both platforms):
+    □ Chat UI component in React.js and React Native
+    □ WebSocket connection to FastAPI /ai/v1/chat/message
+    □ Source citations display per response
+    □ Document upload interface for admin
+    □ Voice input on mobile (expo-av)
+
+────────────────────────────────────────────────────────────────────────────────
+PHASE 8: DEPLOYMENT (Week 15–16)
+────────────────────────────────────────────────────────────────────────────────
+Deliverables:
+    □ All services containerized with Dockerfiles
+    □ Docker Compose for local dev environment
+    □ Kubernetes manifests for production
+    □ CI/CD pipelines with GitHub Actions
+    □ Domain, SSL, and reverse proxy configured
+    □ Monitoring and observability stack
+
+Infrastructure:
+    Cloud Provider: AWS / GCP / Azure (or self-hosted)
+
+    Services:
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Service           │ Resource                                │
+    ├───────────────────┼─────────────────────────────────────────┤
+    │ Go Backend        │ EKS / GKE Pod (autoscaled)              │
+    │ FastAPI AI        │ EKS / GKE Pod (GPU node for inference)  │
+    │ PostgreSQL        │ AWS RDS (Multi-AZ) / GCP Cloud SQL      │
+    │ Redis             │ AWS ElastiCache                         │
+    │ File Storage      │ AWS S3 / MinIO                          │
+    │ Message Queue     │ AWS SQS / RabbitMQ on EKS               │
+    │ Web Frontend      │ Vercel / Netlify / S3 + CloudFront CDN  │
+    │ Mobile App        │ Expo EAS Build → Play Store + App Store │
+    │ Reverse Proxy     │ Nginx / Traefik as Ingress              │
+    │ SSL               │ Let's Encrypt / ACM                     │
+    └───────────────────┴─────────────────────────────────────────┘
+
+Monitoring Stack:
+    - Prometheus + Grafana (metrics)
+    - Loki (log aggregation)
+    - Jaeger (distributed tracing via OpenTelemetry)
+    - Uptime Kuma (uptime monitoring)
+    - PagerDuty / Opsgenie (alerting)
+
+CI/CD Pipeline (GitHub Actions):
+    On PR:     lint → unit tests → integration tests → build image
+    On merge:  build Docker image → push to registry → deploy to staging
+    On tag:    deploy to production with health check gate
+
+Directory Layout (Root):
+    /HRMS
+    ├── backend-go/          ← Go main backend
+    ├── backend-ai/          ← FastAPI AI service
+    ├── frontend-web/        ← React.js web app
+    ├── frontend-mobile/     ← React Native app
+    ├── database/            ← Migrations, seeds, ERD
+    ├── infrastructure/      ← Docker, K8s manifests, IaC (Terraform)
+    │   ├── docker-compose.yml
+    │   ├── k8s/
+    │   └── terraform/
+    ├── .github/workflows/   ← CI/CD pipelines
+    ├── docs/                ← API docs, architecture diagrams
+    └── HRMS_Requirements.txt
+
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION 5 — TIMELINE SUMMARY
+════════════════════════════════════════════════════════════════════════════════
+
+┌────────┬──────────────────────────────────────────────────────────────────┐
+│ Week   │ Activity                                                         │
+├────────┼──────────────────────────────────────────────────────────────────┤
+│ 1–2    │ Phase 1: Database Schema Design (ERD + DDL + migrations)        │
+│ 2      │ Phase 2: Database Creation (Docker + pgvector + seed data)      │
+│ 3      │ Phase 3: DB Integration (Go repository layer + FastAPI ORM)     │
+│ 4–8    │ Phase 4: Core Module Development (Go backend — all 12 modules)  │
+│ 8–10   │ Phase 5: Face Recognition System (FastAPI)                      │
+│ 10–11  │ Phase 6: FastAPI ↔ Go Integration (internal service calls)      │
+│ 11–14  │ Phase 7: Frontend (React.js web + React Native mobile + chat)   │
+│ 15–16  │ Phase 8: Deployment (Docker, K8s, CI/CD, monitoring)            │
+└────────┴──────────────────────────────────────────────────────────────────┘
+Total Duration: ~16 weeks (4 months)
+
+
+════════════════════════════════════════════════════════════════════════════════
+SECTION 6 — RISK REGISTER
+════════════════════════════════════════════════════════════════════════════════
+
+┌───────────────────────────────────┬──────────┬───────────────────────────┐
+│ Risk                              │ Impact   │ Mitigation                │
+├───────────────────────────────────┼──────────┼───────────────────────────┤
+│ Face recognition accuracy low     │ High     │ Fine-tune with org data;  │
+│ in varied lighting conditions     │          │ fallback to manual login  │
+├───────────────────────────────────┼──────────┼───────────────────────────┤
+│ Go learning curve for team        │ Medium   │ Start with CRUD modules;  │
+│ unfamiliar with Golang            │          │ pair programming; use Gin │
+├───────────────────────────────────┼──────────┼───────────────────────────┤
+│ RAG chatbot hallucinations        │ High     │ Restrict LLM to retrieved │
+│ on HR policy queries              │          │ context; add disclaimers  │
+├───────────────────────────────────┼──────────┼───────────────────────────┤
+│ Payroll statutory compliance      │ High     │ Involve CA/legal for tax  │
+│ requirements change               │          │ slab updates; config-     │
+│                                   │          │ driven, not hardcoded     │
+├───────────────────────────────────┼──────────┼───────────────────────────┤
+│ pgvector similarity search slow   │ Medium   │ Use HNSW index; cache     │
+│ with large employee datasets      │          │ frequent embeddings       │
+├───────────────────────────────────┼──────────┼───────────────────────────┤
+│ GDPR/PII data handling            │ High     │ Column-level encryption;  │
+│                                   │          │ audit trails; right-to-   │
+│                                   │          │ delete implementation     │
+└───────────────────────────────────┴──────────┴───────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+END OF DOCUMENT
+================================================================================

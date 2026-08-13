@@ -1,0 +1,89 @@
+================================================================================
+                         INTELLIHR SYSTEM PROGRESS TRACKER
+================================================================================
+
+PHASE: Sprint 1 — Production-Grade Go Backend Core Infrastructure & Modules
+STATUS: 100% Completed
+COMPILATION STATUS: Clean Build (0 compilation errors across all modules)
+DOCUMENTATION: Full API documentation available in `endpoints.txt`
+
+--------------------------------------------------------------------------------
+1. ARCHITECTURE & INFRASTRUCTURE HIGHLIGHTS
+--------------------------------------------------------------------------------
+• Architecture: Clean 3-Layer Architecture (Handler ➔ Service ➔ Repository).
+• Web Framework: Gin Gonic (high performance, minimal overhead).
+• Database Layer: PostgreSQL with `pgx/v5` connection pooling.
+• Caching & State: Redis client setup for rate limiting & token revocation.
+• Security & Auth: JWT authentication with custom claims, password hashing (bcrypt), token rotation, failed login rate-limiting (30-min account lockouts), and granular Role-Based Access Control (RBAC).
+• Integration Layer: Built-in HTTP client for FastAPI AI microservice communication (Face Recognition Check-In).
+
+--------------------------------------------------------------------------------
+2. COMPLETED SPRINT 1 MODULES & SUB-MODULES
+--------------------------------------------------------------------------------
+
+MODULE 1: Authentication & Role-Based Access Control (RBAC)
+--------------------------------------------------------------------------------
+  • Organization Registration & Initial Setup (auto-provisions Super Admin role & full permissions).
+  • Secure User Login with IP/User-Agent tracking & failed attempt lockout protection.
+  • JWT Refresh Token Rotation & Theft Detection.
+  • Password Reset & Change Password workflows with multi-device session invalidation.
+  • User CRUD Operations (List, Create, Update, Deactivate).
+  • Role & Permission Management (Create Custom Roles, Assign Roles to Users, Update Role-Permission Matrices).
+
+MODULE 2: Core Employee Management
+--------------------------------------------------------------------------------
+  • Core Employee Directory: Employee creation with auto-generated Employee Codes (e.g., EMPJD0001), paginated search, filter by department/designation/status, and profile views.
+  • Department Management: Hierarchical department structures (Parent Dept & Dept Head linkage).
+  • Designation Management: Job titles, grades/levels, and department associations.
+  • Bank Details Management: Primary bank account details with masked display (e.g. XXXX-XXXX-1234).
+  • Emergency Contacts: Multi-contact management (name, relation, phone, email, address).
+  • Employee Documents: Document upload metadata, HR verification pipeline, and document deletion.
+  • Onboarding Checklist: Task creation, assignment, due date tracking, and status updates (pending/completed).
+
+MODULE 3: Attendance & Time Tracking
+--------------------------------------------------------------------------------
+  • Standard Check-In & Check-Out endpoints.
+  • AI Face Recognition Check-In integration (proxies face image payloads to FastAPI AI service).
+  • Daily Real-Time Attendance Overview (Today's status, working hours, and check-in times).
+
+MODULE 4: Leave Management
+--------------------------------------------------------------------------------
+  • Leave Types: Creation and configuration of leave rules (Casual, Sick, Earned, Paid/Unpaid, notice period, document upload requirement).
+  • Leave Policies: Designation/Department level annual quota rules (upfront, monthly, quarterly accrual).
+  • Leave Balances: Annual quota allocation and real-time tracking (total, used, pending, available).
+  • Leave Application Workflow: Full submission, balance validation, manager approval (auto-adjusts pending/used balances), rejection with comments, and cancellation.
+
+MODULE 5: Payroll & Compensation
+--------------------------------------------------------------------------------
+  • Salary Structures & Components: Definition of earnings & deductions with percentage formulas (HRA, DA, PF, Professional Tax, Special Allowance).
+  • Employee CTC Assignment: Assigning CTC structures with automatic monthly basic salary calculations.
+  • Batch Payroll Processing Runs: Monthly organization-wide payroll runs (`month`, `year`) calculating gross, deductions, and net pay per employee.
+  • Payslip Generation: Creation and history listing of detailed JSON breakdown payslips.
+  • Expense Reimbursements: Employee claim submission, organization-wide review, and approval/rejection for payroll integration.
+  • Tax Declarations: Annual tax regime selection (Old vs New) and Section 80C/80D investment declaration storage.
+
+MODULE 6: Workflow & Custom Approvals Engine
+--------------------------------------------------------------------------------
+  • Workflow Templates: Multi-stage workflow creation for any module (leave, expense, document, shift).
+  • Multi-Step Approval Engine: Universal approval request submission for resources.
+  • Automated State Machine: Step-by-step approval processing (advances to next step or marks request as fully approved/rejected upon decision).
+  • User Dashboard Queues: Dedicated endpoints for pending approval requests and submitted requests audit trails.
+
+MODULE 7: Notifications & Announcements
+--------------------------------------------------------------------------------
+  • In-App Notifications: System notification inbox with real-time unread count badges, read markers, and single-click "mark all as read".
+  • Company Announcements: Broadcast announcements targeted company-wide or to specific departments with expiry dates.
+  • Notification Preferences: Per-user channel preferences configuration (Email, Push, SMS) per event type.
+  • Push Token Management: FCM / Web Push device token registration and removal.
+
+--------------------------------------------------------------------------------
+3. VERIFICATION & REPOSITORY METRICS
+--------------------------------------------------------------------------------
+• Go Compiler Status: Verified via `go build ./...` with 0 warnings / 0 errors.
+• Total HTTP Endpoints: 65+ fully functional, protected API endpoints.
+• Code Structure: Modular structure organized in `internal/models`, `internal/repository`, `internal/service`, `internal/handler`, `internal/middleware`, and `internal/router`.
+• Environment & Config: Loaded via environment variables (`.env`).
+
+================================================================================
+                             END OF SPRINT 1 SUMMARY
+================================================================================
